@@ -1,0 +1,67 @@
+# ================================
+# macOS
+# ================================
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ================================
+# Xcode
+# ================================
+# Build generated
+build/
+DerivedData/
+
+# User-specific settings
+xcuserdata/
+project.xcworkspace/
+
+# Xcode automatic backup files
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+*.xcuserstate
+
+# ================================
+# Swift Package Manager
+# ================================
+.swiftpm/
+.build/
+
+# ================================
+# CocoaPods
+# ================================
+Pods/
+Podfile.lock
+
+# ================================
+# Carthage
+# ================================
+Carthage/
+Carthage/Build/
+
+# ================================
+# Fastlane
+# ================================
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# ================================
+# Miscellaneous
+# ================================
+*.swp
+*.lock
+*.bak
+*.tmp
+*.log
+*.orig
+
+# ================================
+# Environment files
+# ================================
+.env
+.env.local
+.env.production
+.env.development
