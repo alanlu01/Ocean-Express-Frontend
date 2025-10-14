@@ -13,6 +13,11 @@ struct LoginReq: Codable { let email: String; let password: String }
 struct APIUser: Codable { let id: Int; let email: String }
 struct LoginResp: Codable { let token: String; let user: APIUser }
 
+// Fallback placeholder to fix "Cannot find 'HomeView' in scope" during compilation
+// Remove this when the real `HomeView` file is included in the target.
+
+
+
 struct LoginView: View {
     @State private var email: String = ""
     @State private var password: String = ""
@@ -25,7 +30,7 @@ struct LoginView: View {
         Group {
             if isLoggedIn {
                 HomeView()
-                    .transition(.slide)
+                    .transition(AnyTransition.slide)
             } else {
                 VStack(spacing: 24) {
                     // App Title
@@ -89,6 +94,7 @@ struct LoginView: View {
         }
         .tint(.accentColor)
         .accentColor(.accentColor)
+        .animation(.default, value: isLoggedIn)
         .alert(isPresented: $showAlert) {
             Alert(title: Text("Login Error"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
         }

@@ -1,185 +1,185 @@
-//
-//  HomeView.swift
-//  OceanExpress
-//
-//  Created by 呂翰昇 on 2025/10/13.
-//
 
 import SwiftUI
-import UIKit
 
 struct HomeView: View {
-    init() {
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor.systemBackground
-        UINavigationBar.appearance().standardAppearance = appearance
-        UINavigationBar.appearance().scrollEdgeAppearance = appearance
-    }
-    // MARK: - Grid layout
-    private let columns: [GridItem] = [
-        GridItem(.flexible(), spacing: 16)
-    ]
+    @EnvironmentObject private var cart: Cart
 
-    // MARK: - Sample Data (for demo)
-    private let restaurants: [Restaurant] = SampleData.restaurants
+    // Demo restaurant list (fileprivate to avoid type clashes)
+    fileprivate let restaurants: [RestaurantListItem] = [
+        .init(name: "Marina Burger", imageURL: URL(string: "https://images.unsplash.com/photo-1550547660-d9450f859349?w=1200&q=80")),
+        .init(name: "Harbor Coffee", imageURL: URL(string: "https://images.unsplash.com/photo-1504754524776-8f4f37790ca0?w=1200&q=80")),
+        .init(name: "Green Bowl", imageURL: URL(string: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=1200&q=80"))
+    ]
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 16) {
+                LazyVStack(spacing: 16) {
                     ForEach(restaurants) { r in
-                        NavigationLink(destination: RestaurantDetailPlaceholder(restaurant: r)) {
-                            RestaurantCard(restaurant: r)
+                        NavigationLink(destination: RestaurantMenuView(restaurantName: r.name)) {
+                            RestaurantCard(item: r)
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.top, 8)
                 .padding(.horizontal, 16)
-                .scrollIndicators(.hidden)
-                .safeAreaInset(edge: .top) { Color(.systemBackground).frame(height: 8) }
-                .background(Color(.systemBackground))
+                .padding(.bottom, 24)
             }
             .navigationTitle("Discover")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Color(.systemBackground), for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    NavigationLink(destination: CartView()) {
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "cart")
+                                .imageScale(.large)
+                            if cart.itemCount > 0 {
+                                Text("\(cart.itemCount)")
+                                    .font(.caption2).bold()
+                                    .padding(4)
+                                    .background(Circle().fill(Color.red))
+                                    .foregroundColor(.white)
+                                    .offset(x: 8, y: -8)
+                            }
+                        }
+                    }
+                }
+            }
         }
-        .tint(.accentColor)
     }
 }
 
-// MARK: - Card View
-private struct RestaurantCard: View {
-    let restaurant: Restaurant
+fileprivate struct RestaurantListItem: Identifiable, Hashable {
+    // Use a stable id so SwiftUI can diff correctly across view reloads
+    var id: String { name }
+    let name: String
+    let imageURL: URL?
+}
 
-    private func placeholderURL(for id: UUID) -> URL? {
-        // Stable 21:9 placeholder per restaurant using its UUID as seed
-        URL(string: "https://picsum.photos/seed/\(id.uuidString)/2100/900")
-    }
+fileprivate struct RestaurantCard: View {
+    let item: RestaurantListItem
+
+    // 21:9 cover style card height based on screen width minus horizontal padding
+    private var cardHeight: CGFloat { ((UIScreen.main.bounds.width - 32) * 9.0) / 21.0 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Big image (strict 21:9 from width; crop overflow without distortion)
-            Color.clear
-                .frame(maxWidth: .infinity)
-                .aspectRatio(21.0/9.0, contentMode: .fit) // height = width * 9/21
-                .overlay(
-                    AsyncImage(url: restaurant.imageURL ?? placeholderURL(for: restaurant.id)) { phase in
-                        switch phase {
-                        case .empty:
-                            ZStack {
-                                Rectangle().fill(Color(.secondarySystemFill))
-                                ProgressView()
-                            }
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill() // fill the 21:9 container
-                        case .failure:
-                            ZStack {
-                                Rectangle().fill(Color(.secondarySystemFill))
-                                Image(systemName: "photo")
-                                    .font(.title)
-                                    .foregroundStyle(.secondary)
-                            }
-                        @unknown default:
-                            EmptyView()
-                        }
-                    }
-                )
-                .clipped()
-                .cornerRadius(12)
-
-            // Name
-            Text(restaurant.name)
-                .font(.headline)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-
-            // Optional meta (cuisine + rating + ETA)
-            HStack(spacing: 6) {
-                if let cuisine = restaurant.cuisine { Text(cuisine).foregroundStyle(.secondary) }
-                if let rating = restaurant.rating { Text("• \(String(format: "%.1f", rating))★").foregroundStyle(.secondary) }
-                if let eta = restaurant.etaMinutes { Text("• \(eta) min").foregroundStyle(.secondary) }
-            }
-            .font(.subheadline)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-// MARK: - Detail Placeholder
-private struct RestaurantDetailPlaceholder: View {
-    let restaurant: Restaurant
-    var body: some View {
-        VStack(spacing: 16) {
-            AsyncImage(url: restaurant.imageURL) { phase in
+            AsyncImage(url: item.imageURL) { phase in
                 switch phase {
-                case .empty:
-                    ZStack {
-                        Rectangle().fill(Color(.secondarySystemFill))
-                        ProgressView()
-                    }
-                case .success(let image):
-                    image.resizable().scaledToFit()
-                case .failure:
-                    Image(systemName: "photo").font(.largeTitle)
-                @unknown default:
-                    Color(.secondarySystemFill)
+                case .success(let img):
+                    img
+                        .resizable()
+                        .scaledToFill()
+                        .frame(height: cardHeight)
+                        .frame(maxWidth: .infinity)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                default:
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.secondary.opacity(0.15))
+                        .frame(height: cardHeight)
+                        .overlay(
+                            Image(systemName: "photo")
+                                .imageScale(.large)
+                                .foregroundColor(.secondary)
+                        )
                 }
             }
-            .frame(height: 220)
-            .cornerRadius(12)
 
-            Text(restaurant.name)
-                .font(.title2.bold())
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-
-            if let cuisine = restaurant.cuisine {
-                Text(cuisine).foregroundStyle(.secondary)
-            }
-
-            Spacer()
+            Text(item.name)
+                .font(.headline)
+                .padding(.horizontal, 4)
         }
-        .padding()
-        .navigationTitle("Restaurant")
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
-// MARK: - Model & Sample Data (in-file to avoid new files)
-private struct Restaurant: Identifiable, Hashable, Codable {
-    let id: UUID
-    let name: String
-    let imageURL: URL?
-    let cuisine: String?
-    let rating: Double?
-    let etaMinutes: Int?
+fileprivate struct RestaurantMenuView: View {
+    let restaurantName: String
 
-    init(id: UUID = UUID(), name: String, imageURL: URL?, cuisine: String? = nil, rating: Double? = nil, etaMinutes: Int? = nil) {
-        self.id = id
-        self.name = name
-        self.imageURL = imageURL
-        self.cuisine = cuisine
-        self.rating = rating
-        self.etaMinutes = etaMinutes
+    var body: some View {
+        List {
+            Section(header: Text("Menu")) {
+                ForEach(AppModels.SampleMenu.items) { item in
+                    NavigationLink(destination: MenuItemDetailView(item: item)) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.name)
+                                .font(.headline)
+                            HStack(spacing: 8) {
+                                Text(String(format: "$%.2f", item.price))
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                if let firstSize = item.sizes.first {
+                                    Text(firstSize)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+        .navigationTitle(restaurantName)
     }
 }
 
-private enum SampleData {
-    static let restaurants: [Restaurant] = [
-        Restaurant(name: "Blue Whale Sushi", imageURL: URL(string: "https://images.unsplash.com/photo-1544025162-d76694265947?w=1200&q=80"), cuisine: "Japanese", rating: 4.7, etaMinutes: 25),
-        Restaurant(name: "Panda Noodles", imageURL: URL(string: "https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?w=1200&q=80"), cuisine: "Chinese", rating: 4.5, etaMinutes: 20),
-        Restaurant(name: "Marina Burger", imageURL: URL(string: "https://images.unsplash.com/photo-1550547660-d9450f859349?w=1200&q=80"), cuisine: "Burgers", rating: 4.3, etaMinutes: 18),
-        Restaurant(name: "Harbor Coffee", imageURL: URL(string: "https://images.unsplash.com/photo-1504754524776-8f4f37790ca0?w=1200&q=80"), cuisine: "Cafe", rating: 4.6, etaMinutes: 15),
-        Restaurant(name: "Ocean Curry House", imageURL: URL(string: "https://images.unsplash.com/photo-1604908176997-43162b14b4f9?w=1200&q=80"), cuisine: "Indian", rating: 4.4, etaMinutes: 30),
-        Restaurant(name: "Seagull Pizza", imageURL: URL(string: "https://images.unsplash.com/photo-1548365328-9f547fb09530?w=1200&q=80"), cuisine: "Pizza", rating: 4.2, etaMinutes: 22),
-    ]
+fileprivate struct CartView: View {
+    @EnvironmentObject private var cart: Cart
+
+    var body: some View {
+        List {
+            if cart.items.isEmpty {
+                Text("Your cart is empty")
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(cart.items) { ci in
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(ci.item.name)
+                                .font(.body)
+                            Text("\(ci.size) • \(ci.spiciness)\(ci.addDrink ? " • +Drink" : "")")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Text("x\(ci.quantity)")
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .foregroundColor(.secondary)
+                        Text(String(format: "$%.2f", ci.lineTotal))
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .frame(minWidth: 70, alignment: .trailing)
+                    }
+                }
+
+                Section {
+                    HStack {
+                        Text("Subtotal")
+                        Spacer()
+                        Text(String(format: "$%.2f", cart.subtotal))
+                            .bold()
+                            .monospacedDigit()
+                    }
+                }
+                Section {
+                    Button {
+                        // TODO: 結帳流程（後續接功能）
+                    } label: {
+                        Text("結帳")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.accentColor)
+                    .disabled(cart.items.isEmpty)
+                }
+            }
+        }
+        .navigationTitle("Cart")
+    }
 }
 
 #Preview {
     HomeView()
+        .environmentObject(Cart())
 }
