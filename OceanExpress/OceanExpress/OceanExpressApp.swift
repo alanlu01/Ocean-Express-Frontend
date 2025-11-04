@@ -11,11 +11,8 @@ import SwiftData
 @main
 struct OceanExpressApp: App {
     var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
+        let schema = Schema([Item.self])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
@@ -25,7 +22,7 @@ struct OceanExpressApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            DelivererModule()
         }
         .modelContainer(sharedModelContainer)
     }
