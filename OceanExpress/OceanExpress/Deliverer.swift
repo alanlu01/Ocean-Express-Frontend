@@ -397,9 +397,7 @@ struct OrderCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             if let actionTitle, let action {
-                Button(actionTitle) { action() }
-                    .buttonStyle(.borderedProminent)
-                    .frame(maxWidth: .infinity)
+                BigActionButton(title: actionTitle, systemImage: "hand.tap.fill", action: action, size: .regular)
                     .padding(.top, 6)
             }
         }
@@ -481,18 +479,22 @@ struct OrderDetailView: View {
     @State private var routeDistanceMeters: CLLocationDistance = 0
     @State private var routeETASecs: TimeInterval = 0
 
+    private var liveOrder: Order {
+        app.activeTasks.first(where: { $0.id == order.id }) ?? order
+    }
+
     private func computeRoute() {
         let startCoord: CLLocationCoordinate2D
         let endCoord: CLLocationCoordinate2D
-        if order.status == .enRouteToPickup, let u = loc.userLocation?.coordinate {
+        if liveOrder.status == .enRouteToPickup, let u = loc.userLocation?.coordinate {
             startCoord = u
-            endCoord = order.merchant.coordinate
-        } else if order.status == .delivering || order.status == .pickedUp {
-            startCoord = order.merchant.coordinate
-            endCoord = order.dropoff.coordinate
+            endCoord = liveOrder.merchant.coordinate
+        } else if liveOrder.status == .delivering || liveOrder.status == .pickedUp {
+            startCoord = liveOrder.merchant.coordinate
+            endCoord = liveOrder.dropoff.coordinate
         } else {
-            startCoord = order.merchant.coordinate
-            endCoord = order.dropoff.coordinate
+            startCoord = liveOrder.merchant.coordinate
+            endCoord = liveOrder.dropoff.coordinate
         }
         let req = MKDirections.Request()
         req.source = MKMapItem(placemark: MKPlacemark(coordinate: startCoord))
@@ -524,11 +526,11 @@ struct OrderDetailView: View {
                         .annotationTitles(.automatic)
                 }
                 // 標註商家與顧客
-                Annotation("取餐：\(order.merchant.name)", coordinate: order.merchant.coordinate) {
+                Annotation("取餐：\(liveOrder.merchant.name)", coordinate: liveOrder.merchant.coordinate) {
                     Label("取餐", systemImage: "bag")
                         .padding(8).background(.thinMaterial).clipShape(RoundedRectangle(cornerRadius: 8))
                 }
-                Annotation("送達：\(order.customer.displayName)", coordinate: order.dropoff.coordinate) {
+                Annotation("送達：\(liveOrder.customer.displayName)", coordinate: liveOrder.dropoff.coordinate) {
                     Label("送達", systemImage: "mappin.and.ellipse")
                         .padding(8).background(.thinMaterial).clipShape(RoundedRectangle(cornerRadius: 8))
                 }
@@ -543,17 +545,17 @@ struct OrderDetailView: View {
             .padding(.top)
 
             VStack(alignment: .leading, spacing: 12) {
-                InfoRow(title: "顧客", value: "\(order.customer.displayName)  (☎︎ \(order.customer.phone))")
-                InfoRow(title: "送達地址", value: order.dropoff.address)
-                InfoRow(title: "商家", value: order.merchant.name)
-                InfoRow(title: "商家地址", value: order.merchant.address)
-                InfoRow(title: "備註", value: order.notes.isEmpty ? "無" : order.notes)
-                InfoRow(title: "取餐狀態", value: order.canPickup ? "可取餐" : "準備中")
+                InfoRow(title: "顧客", value: "\(liveOrder.customer.displayName)  (☎︎ \(liveOrder.customer.phone))")
+                InfoRow(title: "送達地址", value: liveOrder.dropoff.address)
+                InfoRow(title: "商家", value: liveOrder.merchant.name)
+                InfoRow(title: "商家地址", value: liveOrder.merchant.address)
+                InfoRow(title: "備註", value: liveOrder.notes.isEmpty ? "無" : liveOrder.notes)
+                InfoRow(title: "取餐狀態", value: liveOrder.canPickup ? "可取餐" : "準備中")
                 Divider()
                 HStack(spacing: 16) {
-                    Label("$\(Int(order.fee))", systemImage: "dollarsign")
-                    Label("\(String(format: "%.1f", order.distanceKm)) km", systemImage: "location")
-                    Label("\(order.etaMinutes) 分", systemImage: "clock")
+                    Label("$\(Int(liveOrder.fee))", systemImage: "dollarsign")
+                    Label("\(String(format: "%.1f", liveOrder.distanceKm)) km", systemImage: "location")
+                    Label("\(liveOrder.etaMinutes) 分", systemImage: "clock")
                 }.foregroundStyle(.secondary)
                 if routeDistanceMeters > 0 {
                     HStack(spacing: 16) {
@@ -567,9 +569,9 @@ struct OrderDetailView: View {
             .padding(.horizontal)
             .padding(.vertical, 12)
         }
-        .navigationTitle("訂單詳情 #\(order.code)")
+        .navigationTitle("訂單詳情 #\(liveOrder.code)")
         .sheet(isPresented: $showUpdateSheet) {
-            StatusUpdateSheet(order: order)
+            StatusUpdateSheet(order: liveOrder)
                 .presentationDetents([.height(360), .medium])
         }
         .safeAreaInset(edge: .bottom) {
@@ -590,7 +592,7 @@ struct OrderDetailView: View {
             .background(.ultraThinMaterial)
         }
         .onAppear { computeRoute() }
-        .onChange(of: order.status) { _ in computeRoute() }
+        .onChange(of: app.activeTasks) { _ in computeRoute() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in computeRoute() }
     }
 }
@@ -662,6 +664,7 @@ struct BigActionButton: View {
     var title: String
     var systemImage: String
     var action: () -> Void
+    var size: ControlSize = .large
     var body: some View {
         Button(action: action) {
             HStack {
@@ -673,7 +676,7 @@ struct BigActionButton: View {
             .padding()
         }
         .buttonStyle(.borderedProminent)
-        .controlSize(.large)
+        .controlSize(size)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }
@@ -803,11 +806,6 @@ extension MKPolyline {
     }
 }
 
-extension MKCoordinateRegion {
-    init(_ rect: MKMapRect) {
-        self = MKCoordinateRegion(rect)
-    }
-}
 
 extension CLLocationCoordinate2D: Codable {
     public func encode(to encoder: any Encoder) throws {
