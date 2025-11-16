@@ -10,6 +10,7 @@ import SwiftData
 
 @main
 struct OceanExpressApp: App {
+    @StateObject private var cart = Cart()
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([Item.self])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
@@ -22,7 +23,8 @@ struct OceanExpressApp: App {
 
     var body: some Scene {
         WindowGroup {
-            DelivererModule()
+            LoginView()
+                .environmentObject(cart)
         }
         .modelContainer(sharedModelContainer)
     }
