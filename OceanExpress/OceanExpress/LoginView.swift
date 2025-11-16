@@ -16,6 +16,30 @@ struct LoginResp: Codable { let token: String; let user: APIUser }
 // Fallback placeholder to fix "Cannot find 'HomeView' in scope" during compilation
 // Remove this when the real `HomeView` file is included in the target.
 
+enum AuthRole: String, CaseIterable, Identifiable {
+    case customer
+    case deliverer
+    case restaurant
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .customer: return "買家"
+        case .deliverer: return "外送員"
+        case .restaurant: return "餐廳"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .customer: return "person.crop.circle"
+        case .deliverer: return "bicycle"
+        case .restaurant: return "fork.knife.circle"
+        }
+    }
+}
+
 
 
 struct LoginView: View {
@@ -25,11 +49,12 @@ struct LoginView: View {
     @State private var showAlert = false
     @State private var alertMessage = ""
     @State private var isLoggedIn = false
+    @State private var role: AuthRole = .customer
 
     var body: some View {
         Group {
             if isLoggedIn {
-                HomeView()
+                roleDestination(role)
                     .transition(AnyTransition.slide)
             } else {
                 VStack(spacing: 24) {
@@ -61,13 +86,42 @@ struct LoginView: View {
                         .submitLabel(.go)
                         .onSubmit { login() }
 
+                    // Role Selector
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("登入身分").font(.headline)
+                        HStack(spacing: 12) {
+                            ForEach(AuthRole.allCases) { option in
+                                Button {
+                                    role = option
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: option.icon)
+                                        Text(option.title)
+                                    }
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 10)
+                                    .frame(maxWidth: .infinity)
+                                    .background(role == option ? Color.accentColor.opacity(0.15) : Color(.systemGray6))
+                                    .foregroundStyle(role == option ? Color.accentColor : Color.primary)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(role == option ? Color.accentColor : Color.clear, lineWidth: 1)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 32)
+
                     // Login Button
                     Button(action: login) {
                         if isLoading {
                             ProgressView()
                                 .progressViewStyle(.circular)
                         } else {
-                            Text("Log In")
+                            Text("以 \(role.title) 登入")
                                 .fontWeight(.semibold)
                                 .frame(maxWidth: .infinity)
                         }
@@ -123,6 +177,7 @@ struct LoginView: View {
                 alertMessage = "⚠️ Server unavailable — entering demo mode"
                 showAlert = true
                 UserDefaults.standard.set("demo-token", forKey: "auth_token")
+                isLoading = false
                 withAnimation { isLoggedIn = true }
             }
             return
@@ -173,8 +228,38 @@ struct LoginView: View {
             }
         }
     }
+
+    @ViewBuilder
+    private func roleDestination(_ role: AuthRole) -> some View {
+        switch role {
+        case .customer:
+            HomeView()
+        case .deliverer:
+            DelivererModule()
+        case .restaurant:
+            RestaurantComingSoonView()
+        }
+    }
 }
 
 #Preview {
     LoginView()
+}
+
+struct RestaurantComingSoonView: View {
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Image(systemName: "fork.knife.circle.fill")
+                    .font(.system(size: 64))
+                    .foregroundStyle(.orange)
+                Text("餐廳端介面製作中")
+                    .font(.title3.weight(.semibold))
+                Text("敬請期待！")
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .navigationTitle("餐廳端")
+        }
+    }
 }
