@@ -159,6 +159,16 @@ struct LoginView: View {
         try JSONDecoder().decode(LoginResp.self, from: data)
     }
 
+    private func performLogout() {
+        UserDefaults.standard.removeObject(forKey: "auth_token")
+        withAnimation { isLoggedIn = false }
+    }
+
+    private func handleSwitchRole() {
+        performLogout()
+        role = .customer
+    }
+
     func login() {
         guard !email.isEmpty, !password.isEmpty else {
             alertMessage = "Please enter both email and password."
@@ -168,11 +178,9 @@ struct LoginView: View {
 
         isLoading = true
 
-        let demoMode = true // 將來可改成 false 或偵測環境變數
+        let demoMode = true // 將來可改成 true 或偵測環境變數
 
         if demoMode {
-            // 嘗試連線前先檢查是否能 reach server
-            let demoUser = APIUser(id: 0, email: email.isEmpty ? "demo@oceanexpress.app" : email)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 alertMessage = "⚠️ Server unavailable — entering demo mode"
                 showAlert = true
@@ -233,9 +241,9 @@ struct LoginView: View {
     private func roleDestination(_ role: AuthRole) -> some View {
         switch role {
         case .customer:
-            HomeView()
+            HomeView(onLogout: performLogout, onSwitchRole: handleSwitchRole)
         case .deliverer:
-            DelivererModule()
+            DelivererModule(onLogout: performLogout, onSwitchRole: handleSwitchRole)
         case .restaurant:
             RestaurantComingSoonView()
         }

@@ -158,7 +158,7 @@ final class MockOrderService: OrderServiceProtocol {
         available = Self.sampleOrders()
     }
 
-    static func sampleOrders() -> [Order] {
+    nonisolated static func sampleOrders() -> [Order] {
         let merchant1 = Place(name: "小林便當 - 公館店", address: "台北市中正區羅斯福路四段1號", coordinate: .init(latitude: 25.0143, longitude: 121.5323))
         let drop1 = Place(name: "台大電機系館", address: "台北市大安區辛亥路二段1號", coordinate: .init(latitude: 25.0172, longitude: 121.5395))
         let cust1 = Customer(displayName: "王先生", phone: "0912-345-678", address: drop1.address)
@@ -182,22 +182,25 @@ final class MockOrderService: OrderServiceProtocol {
             continuation.yield(current)
 
             // 模擬即時新增/變動
-            let timer = Timer.scheduledTimer(withTimeInterval: 7, repeats: true) { _ in
-                // 偶爾新增一筆
-                if Bool.random() {
-                    current.append(Self.sampleOrders().randomElement()!)
+            let task = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(7))
+                    // 偶爾新增一筆
+                    if Bool.random(), let random = Self.sampleOrders().randomElement() {
+                        current.append(random)
+                    }
+                    // 偶爾更新距離與時間（模擬動態估算）
+                    current = current.map { o in
+                        var o2 = o
+                        let drift = Double.random(in: -0.1...0.1)
+                        o2.distanceKm = max(0.3, o.distanceKm + drift)
+                        o2.etaMinutes = max(5, Int(Double(o.etaMinutes) + drift * 10))
+                        return o2
+                    }
+                    continuation.yield(current)
                 }
-                // 偶爾更新距離與時間（模擬動態估算）
-                current = current.map { o in
-                    var o2 = o
-                    let drift = Double.random(in: -0.1...0.1)
-                    o2.distanceKm = max(0.3, o.distanceKm + drift)
-                    o2.etaMinutes = max(5, Int(Double(o.etaMinutes) + drift * 10))
-                    return o2
-                }
-                continuation.yield(current)
             }
-            continuation.onTermination = { _ in timer.invalidate() }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
@@ -296,15 +299,19 @@ final class AppState: ObservableObject {
 @MainActor struct DelivererModule: View {
     @StateObject private var appState: AppState
     @StateObject private var loc: LocationManager
+    var onLogout: () -> Void
+    var onSwitchRole: () -> Void
     
 
-    init() {
+    init(onLogout: @escaping () -> Void = {}, onSwitchRole: @escaping () -> Void = {}) {
         _appState = StateObject(wrappedValue: AppState(service: MockOrderService()))
         _loc = StateObject(wrappedValue: LocationManager())
+        self.onLogout = onLogout
+        self.onSwitchRole = onSwitchRole
     }
 
     var body: some View {
-        RootView()
+        RootView(onLogout: onLogout, onSwitchRole: onSwitchRole)
             .environmentObject(appState)
             .environmentObject(loc)
     }
@@ -312,6 +319,8 @@ final class AppState: ObservableObject {
 
 struct RootView: View {
     @EnvironmentObject var loc: LocationManager
+    var onLogout: () -> Void
+    var onSwitchRole: () -> Void
     var body: some View {
         TabView {
             TaskListView()
@@ -322,6 +331,9 @@ struct RootView: View {
 
             HistoryView()
                 .tabItem { Label("歷史紀錄", systemImage: "clock.arrow.circlepath") }
+
+            DelivererSettingsView(onLogout: onLogout, onSwitchRole: onSwitchRole)
+                .tabItem { Label("設定", systemImage: "gearshape") }
         }
         .onAppear { loc.request() }
     }
@@ -497,8 +509,8 @@ struct OrderDetailView: View {
             endCoord = liveOrder.dropoff.coordinate
         }
         let req = MKDirections.Request()
-        req.source = MKMapItem(placemark: MKPlacemark(coordinate: startCoord))
-        req.destination = MKMapItem(placemark: MKPlacemark(coordinate: endCoord))
+        req.source = MKMapItem(location: CLLocation(latitude: startCoord.latitude, longitude: startCoord.longitude), address: nil)
+        req.destination = MKMapItem(location: CLLocation(latitude: endCoord.latitude, longitude: endCoord.longitude), address: nil)
         req.transportType = .automobile
         let dir = MKDirections(request: req)
         dir.calculate { resp, _ in
@@ -592,7 +604,7 @@ struct OrderDetailView: View {
             .background(.ultraThinMaterial)
         }
         .onAppear { computeRoute() }
-        .onChange(of: app.activeTasks) { _ in computeRoute() }
+        .onChange(of: app.activeTasks) { _, _ in computeRoute() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in computeRoute() }
     }
 }
@@ -693,7 +705,7 @@ struct NavigationMapView: View {
     var body: some View {
         VStack(spacing: 0) {
             Map(position: $camPos, selection: $selected) {
-                if let user = loc.userLocation?.coordinate {
+                if loc.userLocation != nil {
                     UserAnnotation()
                         .annotationTitles(.automatic)
                 }
@@ -795,6 +807,48 @@ struct HistoryView: View {
     }
 }
 
+struct DelivererSettingsView: View {
+    var onLogout: () -> Void
+    var onSwitchRole: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("帳號") {
+                    Button {
+                        onSwitchRole()
+                    } label: {
+                        Label("切換身份", systemImage: "arrow.triangle.2.circlepath")
+                    }
+
+                    Button(role: .destructive) {
+                        onLogout()
+                    } label: {
+                        Label("登出", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                }
+
+                Section("偏好設定") {
+                    Toggle(isOn: .constant(true)) {
+                        Label("接單通知", systemImage: "bell.badge.fill")
+                    }
+                    .tint(.accentColor)
+                }
+
+                Section("關於") {
+                    HStack {
+                        Label("版本", systemImage: "info.circle")
+                        Spacer()
+                        Text("0.1.0")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("設定")
+        }
+    }
+}
+
 
 // MARK: - Utilities
 
@@ -803,20 +857,5 @@ extension MKPolyline {
         var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: Int(pointCount))
         getCoordinates(&coords, range: NSRange(location: 0, length: Int(pointCount)))
         return coords
-    }
-}
-
-
-extension CLLocationCoordinate2D: Codable {
-    public func encode(to encoder: any Encoder) throws {
-        var container = encoder.unkeyedContainer()
-        try container.encode(latitude)
-        try container.encode(longitude)
-    }
-    public init(from decoder: any Decoder) throws {
-        var container = try decoder.unkeyedContainer()
-        let lat = try container.decode(Double.self)
-        let lon = try container.decode(Double.self)
-        self.init(latitude: lat, longitude: lon)
     }
 }
