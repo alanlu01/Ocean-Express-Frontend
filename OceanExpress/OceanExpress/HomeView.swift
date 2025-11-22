@@ -3,7 +3,28 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var cart: Cart
+    var onLogout: () -> Void = {}
+    var onSwitchRole: () -> Void = {}
 
+    var body: some View {
+        TabView {
+            RestaurantListView()
+                .tabItem { Label("餐廳列表", systemImage: "fork.knife") }
+
+            CartView()
+                .tabItem { Label("購物車", systemImage: "cart") }
+
+            OrderStatusView()
+                .tabItem { Label("訂單狀態", systemImage: "clock.arrow.circlepath") }
+
+            SettingsView(onLogout: onLogout, onSwitchRole: onSwitchRole)
+                .tabItem { Label("設定", systemImage: "gearshape") }
+        }
+        .tint(.accentColor)
+    }
+}
+
+struct RestaurantListView: View {
     // Demo restaurant list (fileprivate to avoid type clashes)
     fileprivate let restaurants: [RestaurantListItem] = [
         .init(name: "Marina Burger", imageURL: URL(string: "https://images.unsplash.com/photo-1550547660-d9450f859349?w=1200&q=80")),
@@ -25,25 +46,7 @@ struct HomeView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
-            .navigationTitle("Discover")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    NavigationLink(destination: CartView()) {
-                        ZStack(alignment: .topTrailing) {
-                            Image(systemName: "cart")
-                                .imageScale(.large)
-                            if cart.itemCount > 0 {
-                                Text("\(cart.itemCount)")
-                                    .font(.caption2).bold()
-                                    .padding(4)
-                                    .background(Circle().fill(Color.red))
-                                    .foregroundColor(.white)
-                                    .offset(x: 8, y: -8)
-                            }
-                        }
-                    }
-                }
-            }
+            .navigationTitle("餐廳列表")
         }
     }
 }
@@ -58,8 +61,8 @@ fileprivate struct RestaurantListItem: Identifiable, Hashable {
 fileprivate struct RestaurantCard: View {
     let item: RestaurantListItem
 
-    // 21:9 cover style card height based on screen width minus horizontal padding
-    private var cardHeight: CGFloat { ((UIScreen.main.bounds.width - 32) * 9.0) / 21.0 }
+    // 固定高度，避免使用已棄用的 UIScreen.main
+    private let cardHeight: CGFloat = 180
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -177,6 +180,131 @@ fileprivate struct CartView: View {
         }
         .navigationTitle("Cart")
     }
+}
+
+struct OrderStatusView: View {
+    private let activeOrders: [CustomerOrder] = [
+        .init(title: "港灣咖啡 - 拿鐵", status: "準備中", etaMinutes: 12, isHistory: false, placedAt: Date()),
+        .init(title: "Green Bowl - 沙拉", status: "配送中", etaMinutes: 8, isHistory: false, placedAt: Date().addingTimeInterval(-600))
+    ]
+
+    private let historyOrders: [CustomerOrder] = [
+        .init(title: "Marina Burger - 牛肉堡", status: "已送達", etaMinutes: nil, isHistory: true, placedAt: Date().addingTimeInterval(-86400)),
+        .init(title: "港灣咖啡 - 手沖", status: "已送達", etaMinutes: nil, isHistory: true, placedAt: Date().addingTimeInterval(-172800))
+    ]
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("進行中") {
+                    if activeOrders.isEmpty {
+                        ContentUnavailableView("目前沒有進行中的訂單", systemImage: "tray")
+                    } else {
+                        ForEach(activeOrders) { order in
+                            OrderStatusRow(order: order)
+                        }
+                    }
+                }
+
+                Section("歷史訂單") {
+                    ForEach(historyOrders) { order in
+                        OrderStatusRow(order: order)
+                    }
+                }
+            }
+            .navigationTitle("訂單狀態")
+        }
+    }
+}
+
+struct SettingsView: View {
+    var onLogout: () -> Void
+    var onSwitchRole: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("帳號") {
+                    Button {
+                        onSwitchRole()
+                    } label: {
+                        Label("切換身份", systemImage: "arrow.triangle.2.circlepath")
+                    }
+
+                    Button(role: .destructive) {
+                        onLogout()
+                    } label: {
+                        Label("登出", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                }
+
+                Section("偏好設定") {
+                    Toggle(isOn: .constant(true)) {
+                        Label("推播通知", systemImage: "bell.badge.fill")
+                    }
+                    .tint(.accentColor)
+                }
+
+                Section("關於") {
+                    HStack {
+                        Label("版本", systemImage: "info.circle")
+                        Spacer()
+                        Text("0.1.0")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("設定")
+        }
+    }
+}
+
+struct CustomerOrder: Identifiable {
+    let id = UUID()
+    let title: String
+    let status: String
+    let etaMinutes: Int?
+    let isHistory: Bool
+    let placedAt: Date
+}
+
+struct OrderStatusRow: View {
+    let order: CustomerOrder
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(order.title)
+                    .font(.headline)
+                Spacer()
+                Text(order.status)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(order.isHistory ? Color.secondary : Color.accentColor)
+            }
+            HStack(spacing: 8) {
+                Label(order.isHistory ? "已完成" : "預計抵達", systemImage: order.isHistory ? "checkmark.seal" : "clock")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let eta = order.etaMinutes, !order.isHistory {
+                    Text("約 \(eta) 分鐘")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(Self.displayFormatter.string(from: order.placedAt))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private static let displayFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.dateStyle = .short
+        df.timeStyle = .short
+        return df
+    }()
 }
 
 #Preview {

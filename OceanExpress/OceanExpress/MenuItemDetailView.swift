@@ -52,7 +52,7 @@ struct MenuItemDetailView: View {
             }
         }
         .navigationTitle(item.name)
-        .onChange(of: cart.itemCount) { _ in
+        .onChange(of: cart.itemCount) { _, _ in
             // Auto-pop back to the menu when the cart updates
             dismiss()
         }
