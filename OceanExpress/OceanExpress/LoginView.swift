@@ -154,11 +154,6 @@ struct LoginView: View {
         }
     }
 
-    @MainActor
-    private func decodeLoginResp(_ data: Data) throws -> LoginResp {
-        try JSONDecoder().decode(LoginResp.self, from: data)
-    }
-
     private func performLogout() {
         UserDefaults.standard.removeObject(forKey: "auth_token")
         withAnimation { isLoggedIn = false }
@@ -194,43 +189,20 @@ struct LoginView: View {
             DemoConfig.setDemo(enabled: false)
         }
 
-        let url = URL(string: "http://localhost:3000/auth/login")! // 部署後改為你的伺服器網址
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONEncoder().encode(LoginReq(email: email, password: password))
-
-        URLSession.shared.dataTask(with: req) { data, resp, err in
-            DispatchQueue.main.async { isLoading = false }
-
-            if let err = err {
-                showError("Network error: \(err.localizedDescription)")
-                return
-            }
-            guard let http = resp as? HTTPURLResponse, let data = data else {
-                showError("No response from server")
-                return
-            }
-
-            if (200..<300).contains(http.statusCode) {
-                Task { @MainActor in
-                    do {
-                        let result = try decodeLoginResp(data)
-                        UserDefaults.standard.set(result.token, forKey: "auth_token")
-                        withAnimation { isLoggedIn = true }
-                    } catch {
-                        alertMessage = "Response parse error"
-                        showAlert = true
-                    }
-                }
-            } else {
-                if let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String {
-                    showError(msg)
-                } else {
-                    showError("Login failed (\(http.statusCode))")
+        Task {
+            do {
+                let result = try await AuthAPI.login(email: email, password: password)
+                UserDefaults.standard.set(result.token, forKey: "auth_token")
+                isLoading = false
+                withAnimation { isLoggedIn = true }
+            } catch {
+                DispatchQueue.main.async {
+                    isLoading = false
+                    alertMessage = error.localizedDescription
+                    showAlert = true
                 }
             }
-        }.resume()
+        }
 
         func showError(_ msg: String) {
             DispatchQueue.main.async {

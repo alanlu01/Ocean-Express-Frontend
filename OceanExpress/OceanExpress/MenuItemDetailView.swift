@@ -9,6 +9,7 @@ import SwiftUI
 
 struct MenuItemDetailView: View {
     let item: AppModels.MenuItem
+    let restaurantId: String?
     let restaurantName: String
 
     @EnvironmentObject private var cart: Cart
@@ -22,8 +23,9 @@ struct MenuItemDetailView: View {
     @State private var isAdding = false
     @State private var showClearConfirm = false
 
-    init(item: AppModels.MenuItem, restaurantName: String) {
+    init(item: AppModels.MenuItem, restaurantId: String?, restaurantName: String) {
         self.item = item
+        self.restaurantId = restaurantId
         self.restaurantName = restaurantName
         _size = State(initialValue: item.sizes.first ?? "Regular")
         _spiciness = State(initialValue: item.spicinessOptions.first ?? "Mild")
@@ -81,7 +83,7 @@ struct MenuItemDetailView: View {
     private func addToCart() {
         guard !isAdding else { return }
         isAdding = true
-        cart.add(item: item, restaurantName: restaurantName, size: size, spiciness: spiciness, addDrink: addDrink, quantity: quantity)
+        cart.add(item: item, restaurantId: restaurantId, restaurantName: restaurantName, size: size, spiciness: spiciness, addDrink: addDrink, quantity: quantity)
         // Dual dismiss for safety across iOS versions
         DispatchQueue.main.async {
             dismiss()
