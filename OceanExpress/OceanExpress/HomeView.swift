@@ -41,19 +41,15 @@ struct HomeView: View {
 }
 
 struct RestaurantListView: View {
-    // Demo restaurant list
-    fileprivate let restaurants: [RestaurantListItem] = [
-        .init(name: "Marina Burger", imageURL: URL(string: "https://images.unsplash.com/photo-1550547660-d9450f859349?w=1200&q=80")),
-        .init(name: "Harbor Coffee", imageURL: URL(string: "https://images.unsplash.com/photo-1504754524776-8f4f37790ca0?w=1200&q=80")),
-        .init(name: "Green Bowl", imageURL: URL(string: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=1200&q=80"))
-    ]
+    @State private var restaurants: [RestaurantListItem] = Self.sample
+    @State private var isLoading = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 16) {
                     ForEach(restaurants) { r in
-                        NavigationLink(destination: RestaurantMenuView(restaurantName: r.name)) {
+                        NavigationLink(destination: RestaurantMenuView(restaurantId: r.id, restaurantName: r.name)) {
                             RestaurantCard(item: r)
                         }
                         .buttonStyle(.plain)
@@ -63,12 +59,34 @@ struct RestaurantListView: View {
                 .padding(.bottom, 24)
             }
             .navigationTitle("餐廳列表")
+            .task {
+                await loadRestaurants()
+            }
         }
     }
+
+    private func loadRestaurants() async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+        if DemoConfig.isEnabled { return } // demo 保留樣本
+        do {
+            let data = try await RestaurantAPI.fetchRestaurants()
+            restaurants = data.map { RestaurantListItem(id: $0.id, name: $0.name, imageURL: URL(string: $0.imageUrl ?? "")) }
+        } catch {
+            // 失敗時保留樣本
+        }
+    }
+
+    fileprivate static let sample: [RestaurantListItem] = [
+        .init(id: "rest-001", name: "Marina Burger", imageURL: URL(string: "https://images.unsplash.com/photo-1550547660-d9450f859349?w=1200&q=80")),
+        .init(id: "rest-002", name: "Harbor Coffee", imageURL: URL(string: "https://images.unsplash.com/photo-1504754524776-8f4f37790ca0?w=1200&q=80")),
+        .init(id: "rest-003", name: "Green Bowl", imageURL: URL(string: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=1200&q=80"))
+    ]
 }
 
 fileprivate struct RestaurantListItem: Identifiable, Hashable {
-    var id: String { name }
+    let id: String
     let name: String
     let imageURL: URL?
 }
@@ -111,13 +129,16 @@ fileprivate struct RestaurantCard: View {
 }
 
 fileprivate struct RestaurantMenuView: View {
+    let restaurantId: String
     let restaurantName: String
+    @State private var items: [MenuItem] = AppModels.SampleMenu.items
+    @State private var isLoading = false
 
     var body: some View {
         List {
             Section(header: Text("Menu")) {
-                ForEach(AppModels.SampleMenu.items) { item in
-                    NavigationLink(destination: MenuItemDetailView(item: item, restaurantName: restaurantName)) {
+                ForEach(items) { item in
+                    NavigationLink(destination: MenuItemDetailView(item: item, restaurantId: restaurantId, restaurantName: restaurantName)) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.name)
                                 .font(.headline)
@@ -138,6 +159,20 @@ fileprivate struct RestaurantMenuView: View {
             }
         }
         .navigationTitle(restaurantName)
+        .task { await loadMenu() }
+    }
+
+    private func loadMenu() async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+        if DemoConfig.isEnabled { return }
+        do {
+            let data = try await RestaurantAPI.fetchMenu(restaurantId: restaurantId)
+            items = data.map { $0.toMenuItem() }
+        } catch {
+            // 保留樣本
+        }
     }
 }
 
@@ -218,6 +253,8 @@ struct DeliverySetupView: View {
     @State private var deliveryTime: Date = Calendar.current.date(byAdding: .minute, value: 30, to: Date()) ?? Date()
     @State private var notes: String = ""
     @State private var isSubmitting = false
+    @State private var showError = false
+    @State private var errorMessage = ""
     private let timeRange: ClosedRange<Date> = {
         let now = Date()
         let upper = Calendar.current.date(byAdding: .hour, value: 3, to: now) ?? now
@@ -260,24 +297,54 @@ struct DeliverySetupView: View {
         }
         .navigationTitle("設定送達資訊")
         .navigationBarTitleDisplayMode(.inline)
+        .alert("送出失敗", isPresented: $showError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(errorMessage)
+        }
     }
 
     private func submitOrder() {
         guard !isSubmitting else { return }
         isSubmitting = true
         let isDemo = DemoConfig.isEnabled
+        let eta = Int(max(10, deliveryTime.timeIntervalSinceNow / 60))
 
-        if isDemo {
-            let orderTitle = cart.items.first?.restaurantName ?? "新訂單"
-            orderStore.addDemoOrder(title: orderTitle, location: selectedLocation.name, etaMinutes: Int(max(10, deliveryTime.timeIntervalSinceNow / 60)))
-            selectedTab = .status
-        } else {
-            // TODO: 呼叫正式後端建立訂單，再依回應切換狀態頁
+        Task {
+            defer { isSubmitting = false }
+            if isDemo {
+                let orderTitle = cart.items.first?.restaurantName ?? "新訂單"
+                orderStore.addDemoOrder(title: orderTitle, location: selectedLocation.name, etaMinutes: eta)
+                cart.clear()
+                selectedTab = .status
+                dismiss()
+                return
+            }
+
+            do {
+                guard let restaurantId = cart.items.first?.restaurantId ?? cart.currentRestaurant else {
+                    throw APIError(message: "缺少餐廳資訊")
+                }
+                let token = UserDefaults.standard.string(forKey: "auth_token")
+                let itemsPayload = cart.items.map {
+                    OrderAPI.CreateOrderItem(menuItemId: $0.item.id.uuidString, size: $0.size, spiciness: $0.spiciness, addDrink: $0.addDrink, quantity: $0.quantity)
+                }
+                let payload = OrderAPI.CreateOrderPayload(
+                    restaurantId: restaurantId,
+                    items: itemsPayload,
+                    deliveryLocation: .init(name: selectedLocation.name),
+                    notes: notes.isEmpty ? nil : notes,
+                    requestedTime: ISO8601DateFormatter().string(from: deliveryTime)
+                )
+                try await OrderAPI.createOrder(payload: payload, token: token)
+                cart.clear()
+                selectedTab = .status
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+                showError = true
+            }
         }
-
-        cart.clear()
-        isSubmitting = false
-        dismiss()
     }
 }
 

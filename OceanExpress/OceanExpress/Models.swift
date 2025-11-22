@@ -47,15 +47,17 @@ enum AppModels {
     struct CartItem: Identifiable, Hashable, Codable {
         let id: UUID
         let item: MenuItem
+        let restaurantId: String?
         let restaurantName: String
         var size: String
         var spiciness: String
         var addDrink: Bool
         var quantity: Int
 
-        init(id: UUID = UUID(), item: MenuItem, restaurantName: String, size: String, spiciness: String, addDrink: Bool, quantity: Int) {
+        init(id: UUID = UUID(), item: MenuItem, restaurantId: String?, restaurantName: String, size: String, spiciness: String, addDrink: Bool, quantity: Int) {
             self.id = id
             self.item = item
+            self.restaurantId = restaurantId
             self.restaurantName = restaurantName
             self.size = size
             self.spiciness = spiciness
@@ -74,11 +76,11 @@ enum AppModels {
         var itemCount: Int { items.reduce(0) { $0 + $1.quantity } }
         var subtotal: Double { items.reduce(0) { $0 + $1.lineTotal } }
 
-        func add(item: MenuItem, restaurantName: String, size: String, spiciness: String, addDrink: Bool, quantity: Int) {
+        func add(item: MenuItem, restaurantId: String?, restaurantName: String, size: String, spiciness: String, addDrink: Bool, quantity: Int) {
             if let idx = items.firstIndex(where: { $0.item.id == item.id && $0.restaurantName == restaurantName && $0.size == size && $0.spiciness == spiciness && $0.addDrink == addDrink }) {
                 items[idx].quantity += quantity
             } else {
-                items.append(CartItem(item: item, restaurantName: restaurantName, size: size, spiciness: spiciness, addDrink: addDrink, quantity: quantity))
+                items.append(CartItem(item: item, restaurantId: restaurantId, restaurantName: restaurantName, size: size, spiciness: spiciness, addDrink: addDrink, quantity: quantity))
             }
             currentRestaurant = restaurantName
         }
