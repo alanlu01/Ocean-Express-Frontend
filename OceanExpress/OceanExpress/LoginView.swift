@@ -178,17 +178,20 @@ struct LoginView: View {
 
         isLoading = true
 
-        let demoMode = Bool(ProcessInfo.processInfo.environment["DEMO_MODE"] ?? "") ?? true // 預設 demo，可用環境變數關閉
+        let isDemoLogin = email.lowercased() == "demo" && password == "demo"
 
-        if demoMode {
+        if isDemoLogin {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                alertMessage = "⚠️ Server unavailable — entering demo mode"
+                alertMessage = "⚠️ Demo 模式啟用"
                 showAlert = true
                 UserDefaults.standard.set("demo-token", forKey: "auth_token")
+                DemoConfig.setDemo(enabled: true)
                 isLoading = false
                 withAnimation { isLoggedIn = true }
             }
             return
+        } else {
+            DemoConfig.setDemo(enabled: false)
         }
 
         let url = URL(string: "http://localhost:3000/auth/login")! // 部署後改為你的伺服器網址

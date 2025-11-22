@@ -217,6 +217,23 @@ final class MockOrderService: OrderServiceProtocol {
     }
 }
 
+@MainActor
+final class StubOrderService: OrderServiceProtocol {
+    func streamAvailableOrders() -> AsyncStream<[Order]> {
+        AsyncStream { continuation in
+            continuation.yield([])
+        }
+    }
+
+    func accept(order: Order) async throws -> Order { order }
+
+    func updateStatus(order: Order, to status: OrderStatus) async throws -> Order {
+        var updated = order
+        updated.status = status
+        return updated
+    }
+}
+
 // MARK: - App State (ViewModel)
 
 @MainActor
@@ -304,7 +321,8 @@ final class AppState: ObservableObject {
     
 
     init(onLogout: @escaping () -> Void = {}, onSwitchRole: @escaping () -> Void = {}) {
-        _appState = StateObject(wrappedValue: AppState(service: MockOrderService()))
+        let service: OrderServiceProtocol = DemoConfig.isEnabled ? MockOrderService() : StubOrderService()
+        _appState = StateObject(wrappedValue: AppState(service: service))
         _loc = StateObject(wrappedValue: LocationManager())
         self.onLogout = onLogout
         self.onSwitchRole = onSwitchRole

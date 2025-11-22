@@ -265,11 +265,18 @@ struct DeliverySetupView: View {
     private func submitOrder() {
         guard !isSubmitting else { return }
         isSubmitting = true
-        let orderTitle = cart.items.first?.restaurantName ?? "新訂單"
-        orderStore.addDemoOrder(title: orderTitle, location: selectedLocation.name, etaMinutes: Int(max(10, deliveryTime.timeIntervalSinceNow / 60)))
+        let isDemo = DemoConfig.isEnabled
+
+        if isDemo {
+            let orderTitle = cart.items.first?.restaurantName ?? "新訂單"
+            orderStore.addDemoOrder(title: orderTitle, location: selectedLocation.name, etaMinutes: Int(max(10, deliveryTime.timeIntervalSinceNow / 60)))
+            selectedTab = .status
+        } else {
+            // TODO: 呼叫正式後端建立訂單，再依回應切換狀態頁
+        }
+
         cart.clear()
         isSubmitting = false
-        selectedTab = .status
         dismiss()
     }
 }
