@@ -58,8 +58,8 @@ fileprivate struct RestaurantListItem: Identifiable, Hashable {
 fileprivate struct RestaurantCard: View {
     let item: RestaurantListItem
 
-    // 21:9 cover style card height based on screen width minus horizontal padding
-    private var cardHeight: CGFloat { ((UIScreen.main.bounds.width - 32) * 9.0) / 21.0 }
+    // 固定高度避免使用已棄用的 UIScreen.main
+    private let cardHeight: CGFloat = 180
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -99,7 +99,7 @@ fileprivate struct RestaurantMenuView: View {
         List {
             Section(header: Text("Menu")) {
                 ForEach(AppModels.SampleMenu.items) { item in
-                    NavigationLink(destination: MenuItemDetailView(item: item)) {
+                    NavigationLink(destination: MenuItemDetailView(item: item, restaurantName: restaurantName)) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.name)
                                 .font(.headline)
@@ -152,6 +152,12 @@ fileprivate struct CartView: View {
                             .frame(minWidth: 70, alignment: .trailing)
                     }
                 }
+                .onDelete { offsets in
+                    for index in offsets {
+                        let id = cart.items[index].id
+                        cart.remove(id: id)
+                    }
+                }
 
                 Section {
                     HStack {
@@ -163,10 +169,11 @@ fileprivate struct CartView: View {
                     }
                 }
                 Section {
-                    Button {
-                        // TODO: 結帳流程（後續接功能）
+                    NavigationLink {
+                        DeliverySetupView()
+                            .environmentObject(cart)
                     } label: {
-                        Text("結帳")
+                        Text("下一步")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -177,6 +184,86 @@ fileprivate struct CartView: View {
         }
         .navigationTitle("Cart")
     }
+}
+
+struct DeliverySetupView: View {
+    @EnvironmentObject private var cart: Cart
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedLocation: DeliveryLocation = DeliveryLocation.sample.first!
+    @State private var deliveryTime: Date = Calendar.current.date(byAdding: .minute, value: 30, to: Date()) ?? Date()
+    @State private var notes: String = ""
+    @State private var isSubmitting = false
+    private let timeRange: ClosedRange<Date> = {
+        let now = Date()
+        let upper = Calendar.current.date(byAdding: .hour, value: 3, to: now) ?? now
+        return now...upper
+    }()
+
+    var body: some View {
+        Form {
+            Section("送餐地點") {
+                Picker("地點", selection: $selectedLocation) {
+                    ForEach(DeliveryLocation.sample) { loc in
+                        Text(loc.name).tag(loc)
+                    }
+                }
+                if let detail = selectedLocation.detail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("送達時間") {
+                DatePicker("希望送達", selection: $deliveryTime, in: timeRange, displayedComponents: .hourAndMinute)
+            }
+
+            Section("備註（可選）") {
+                TextField("例如：請在警衛室前交付", text: $notes, axis: .vertical)
+            }
+
+            Section {
+                Button {
+                    submitOrder()
+                } label: {
+                    if isSubmitting {
+                        ProgressView()
+                    } else {
+                        Text("送出訂單")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.accentColor)
+                .disabled(isSubmitting || cart.items.isEmpty)
+            }
+        }
+        .navigationTitle("設定送達資訊")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func submitOrder() {
+        guard !isSubmitting else { return }
+        isSubmitting = true
+        // TODO: 接後端 API；暫時直接清空購物車
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            cart.clear()
+            isSubmitting = false
+            dismiss()
+        }
+    }
+}
+
+struct DeliveryLocation: Identifiable, Hashable {
+    let id = UUID()
+    let name: String
+    let detail: String?
+
+    static let sample: [DeliveryLocation] = [
+        .init(name: "電資大樓", detail: "面向新生南路入口"),
+        .init(name: "資工系館", detail: "正門大廳"),
+        .init(name: "河工系館", detail: "一樓側門")
+    ]
 }
 
 #Preview {

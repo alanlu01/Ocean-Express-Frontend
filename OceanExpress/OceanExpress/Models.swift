@@ -47,14 +47,16 @@ enum AppModels {
     struct CartItem: Identifiable, Hashable, Codable {
         let id: UUID
         let item: MenuItem
+        let restaurantName: String
         var size: String
         var spiciness: String
         var addDrink: Bool
         var quantity: Int
 
-        init(id: UUID = UUID(), item: MenuItem, size: String, spiciness: String, addDrink: Bool, quantity: Int) {
+        init(id: UUID = UUID(), item: MenuItem, restaurantName: String, size: String, spiciness: String, addDrink: Bool, quantity: Int) {
             self.id = id
             self.item = item
+            self.restaurantName = restaurantName
             self.size = size
             self.spiciness = spiciness
             self.addDrink = addDrink
@@ -67,20 +69,25 @@ enum AppModels {
 
     final class Cart: ObservableObject {
         @Published var items: [CartItem] = []
+        @Published var currentRestaurant: String? = nil
 
         var itemCount: Int { items.reduce(0) { $0 + $1.quantity } }
         var subtotal: Double { items.reduce(0) { $0 + $1.lineTotal } }
 
-        func add(item: MenuItem, size: String, spiciness: String, addDrink: Bool, quantity: Int) {
-            if let idx = items.firstIndex(where: { $0.item.id == item.id && $0.size == size && $0.spiciness == spiciness && $0.addDrink == addDrink }) {
+        func add(item: MenuItem, restaurantName: String, size: String, spiciness: String, addDrink: Bool, quantity: Int) {
+            if let idx = items.firstIndex(where: { $0.item.id == item.id && $0.restaurantName == restaurantName && $0.size == size && $0.spiciness == spiciness && $0.addDrink == addDrink }) {
                 items[idx].quantity += quantity
             } else {
-                items.append(CartItem(item: item, size: size, spiciness: spiciness, addDrink: addDrink, quantity: quantity))
+                items.append(CartItem(item: item, restaurantName: restaurantName, size: size, spiciness: spiciness, addDrink: addDrink, quantity: quantity))
             }
+            currentRestaurant = restaurantName
         }
 
         func remove(id: UUID) { items.removeAll { $0.id == id } }
-        func clear() { items.removeAll() }
+        func clear() {
+            items.removeAll()
+            currentRestaurant = nil
+        }
     }
 }
 
