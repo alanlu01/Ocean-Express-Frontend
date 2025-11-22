@@ -1,23 +1,40 @@
 import SwiftUI
+import Combine
+import UserNotifications
+
+enum HomeTab: Hashable {
+    case restaurants
+    case cart
+    case status
+    case settings
+}
 
 struct HomeView: View {
     @EnvironmentObject private var cart: Cart
+    @State private var selectedTab: HomeTab = .restaurants
+    @StateObject private var orderStore = CustomerOrderStore()
     var onLogout: () -> Void = {}
     var onSwitchRole: () -> Void = {}
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             RestaurantListView()
                 .tabItem { Label("餐廳列表", systemImage: "fork.knife") }
+                .tag(HomeTab.restaurants)
 
-            CartView()
+            CartView(selectedTab: $selectedTab)
+                .environmentObject(orderStore)
                 .tabItem { Label("購物車", systemImage: "cart") }
+                .tag(HomeTab.cart)
 
             OrderStatusView()
+                .environmentObject(orderStore)
                 .tabItem { Label("訂單狀態", systemImage: "clock.arrow.circlepath") }
+                .tag(HomeTab.status)
 
             SettingsView(onLogout: onLogout, onSwitchRole: onSwitchRole)
                 .tabItem { Label("設定", systemImage: "gearshape") }
+                .tag(HomeTab.settings)
         }
         .tint(.accentColor)
     }
@@ -126,70 +143,77 @@ fileprivate struct RestaurantMenuView: View {
 
 fileprivate struct CartView: View {
     @EnvironmentObject private var cart: Cart
+    @EnvironmentObject private var orderStore: CustomerOrderStore
+    @Binding var selectedTab: HomeTab
 
     var body: some View {
-        List {
-            if cart.items.isEmpty {
-                Text("Your cart is empty")
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(cart.items) { ci in
-                    HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(ci.item.name)
-                                .font(.body)
-                            Text("\(ci.size) • \(ci.spiciness)\(ci.addDrink ? " • +Drink" : "")")
-                                .font(.caption)
+        NavigationStack {
+            List {
+                if cart.items.isEmpty {
+                    Text("Your cart is empty")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(cart.items) { ci in
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(ci.item.name)
+                                    .font(.body)
+                                Text("\(ci.size) • \(ci.spiciness)\(ci.addDrink ? " • +Drink" : "")")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Text("x\(ci.quantity)")
+                                .font(.subheadline)
+                                .monospacedDigit()
                                 .foregroundColor(.secondary)
+                            Text(String(format: "$%.2f", ci.lineTotal))
+                                .font(.subheadline)
+                                .monospacedDigit()
+                                .frame(minWidth: 70, alignment: .trailing)
                         }
-                        Spacer()
-                        Text("x\(ci.quantity)")
-                            .font(.subheadline)
-                            .monospacedDigit()
-                            .foregroundColor(.secondary)
-                        Text(String(format: "$%.2f", ci.lineTotal))
-                            .font(.subheadline)
-                            .monospacedDigit()
-                            .frame(minWidth: 70, alignment: .trailing)
                     }
-                }
-                .onDelete { offsets in
-                    for index in offsets {
-                        let id = cart.items[index].id
-                        cart.remove(id: id)
+                    .onDelete { offsets in
+                        for index in offsets {
+                            let id = cart.items[index].id
+                            cart.remove(id: id)
+                        }
                     }
-                }
 
-                Section {
-                    HStack {
-                        Text("Subtotal")
-                        Spacer()
-                        Text(String(format: "$%.2f", cart.subtotal))
-                            .bold()
-                            .monospacedDigit()
+                    Section {
+                        HStack {
+                            Text("Subtotal")
+                            Spacer()
+                            Text(String(format: "$%.2f", cart.subtotal))
+                                .bold()
+                                .monospacedDigit()
+                        }
                     }
-                }
-                Section {
-                    NavigationLink {
-                        DeliverySetupView()
-                            .environmentObject(cart)
-                    } label: {
-                        Text("下一步")
-                            .frame(maxWidth: .infinity)
+                    Section {
+                        NavigationLink {
+                            DeliverySetupView(selectedTab: $selectedTab)
+                                .environmentObject(cart)
+                                .environmentObject(orderStore)
+                        } label: {
+                            Text("下一步")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.accentColor)
+                        .disabled(cart.items.isEmpty)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.accentColor)
-                    .disabled(cart.items.isEmpty)
                 }
             }
+            .navigationTitle("Cart")
         }
-        .navigationTitle("Cart")
     }
 }
 
 struct DeliverySetupView: View {
     @EnvironmentObject private var cart: Cart
+    @EnvironmentObject private var orderStore: CustomerOrderStore
     @Environment(\.dismiss) private var dismiss
+    @Binding var selectedTab: HomeTab
     @State private var selectedLocation: DeliveryLocation = DeliveryLocation.sample.first!
     @State private var deliveryTime: Date = Calendar.current.date(byAdding: .minute, value: 30, to: Date()) ?? Date()
     @State private var notes: String = ""
@@ -207,11 +231,6 @@ struct DeliverySetupView: View {
                     ForEach(DeliveryLocation.sample) { loc in
                         Text(loc.name).tag(loc)
                     }
-                }
-                if let detail = selectedLocation.detail {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -246,12 +265,12 @@ struct DeliverySetupView: View {
     private func submitOrder() {
         guard !isSubmitting else { return }
         isSubmitting = true
-        // TODO: 接後端 API；暫時直接清空購物車
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            cart.clear()
-            isSubmitting = false
-            dismiss()
-        }
+        let orderTitle = cart.items.first?.restaurantName ?? "新訂單"
+        orderStore.addDemoOrder(title: orderTitle, location: selectedLocation.name, etaMinutes: Int(max(10, deliveryTime.timeIntervalSinceNow / 60)))
+        cart.clear()
+        isSubmitting = false
+        selectedTab = .status
+        dismiss()
     }
 }
 
@@ -268,31 +287,23 @@ struct DeliveryLocation: Identifiable, Hashable {
 }
 
 struct OrderStatusView: View {
-    private let activeOrders: [CustomerOrder] = [
-        .init(title: "港灣咖啡 - 拿鐵", status: "準備中", etaMinutes: 12, isHistory: false, placedAt: Date()),
-        .init(title: "Green Bowl - 沙拉", status: "配送中", etaMinutes: 8, isHistory: false, placedAt: Date().addingTimeInterval(-600))
-    ]
-
-    private let historyOrders: [CustomerOrder] = [
-        .init(title: "Marina Burger - 牛肉堡", status: "已送達", etaMinutes: nil, isHistory: true, placedAt: Date().addingTimeInterval(-86400)),
-        .init(title: "港灣咖啡 - 手沖", status: "已送達", etaMinutes: nil, isHistory: true, placedAt: Date().addingTimeInterval(-172800))
-    ]
+    @EnvironmentObject private var orderStore: CustomerOrderStore
 
     var body: some View {
         NavigationStack {
             List {
                 Section("進行中") {
-                    if activeOrders.isEmpty {
+                    if orderStore.activeOrders.isEmpty {
                         ContentUnavailableView("目前沒有進行中的訂單", systemImage: "tray")
                     } else {
-                        ForEach(activeOrders) { order in
+                        ForEach(orderStore.activeOrders) { order in
                             OrderStatusRow(order: order)
                         }
                     }
                 }
 
                 Section("歷史訂單") {
-                    ForEach(historyOrders) { order in
+                    ForEach(orderStore.historyOrders) { order in
                         OrderStatusRow(order: order)
                     }
                 }
@@ -344,12 +355,73 @@ struct SettingsView: View {
     }
 }
 
+@MainActor
+final class CustomerOrderStore: ObservableObject {
+    @Published var activeOrders: [CustomerOrder] = []
+    @Published var historyOrders: [CustomerOrder] = []
+
+    func addDemoOrder(title: String, location: String, etaMinutes: Int) {
+        let order = CustomerOrder(title: title, location: location, status: .preparing, etaMinutes: etaMinutes, placedAt: Date())
+        activeOrders.append(order)
+        // 模擬狀態更新：10 秒後配送中，再 10 秒後已送達
+        scheduleLocalNotification(body: "\(title) 訂單已建立，準備中")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self else { return }
+            self.update(orderID: order.id, to: .delivering)
+            self.scheduleLocalNotification(body: "\(title) 已開始配送")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+            guard let self else { return }
+            self.complete(orderID: order.id)
+            self.scheduleLocalNotification(body: "\(title) 已送達，感謝使用")
+        }
+    }
+
+    private func update(orderID: UUID, to status: CustomerOrderStatus) {
+        guard let idx = activeOrders.firstIndex(where: { $0.id == orderID }) else { return }
+        activeOrders[idx].status = status
+    }
+
+    private func complete(orderID: UUID) {
+        guard let idx = activeOrders.firstIndex(where: { $0.id == orderID }) else { return }
+        var order = activeOrders.remove(at: idx)
+        order.status = .delivered
+        historyOrders.insert(order, at: 0)
+    }
+
+    private func scheduleLocalNotification(body: String) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        let content = UNMutableNotificationContent()
+        content.title = "OceanExpress"
+        content.body = body
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.5, repeats: false)
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: trigger)
+        center.add(request, withCompletionHandler: nil)
+    }
+}
+
+enum CustomerOrderStatus: String, Codable {
+    case preparing
+    case delivering
+    case delivered
+
+    var displayText: String {
+        switch self {
+        case .preparing: return "準備中"
+        case .delivering: return "配送中"
+        case .delivered: return "已送達"
+        }
+    }
+}
+
 struct CustomerOrder: Identifiable {
     let id = UUID()
     let title: String
-    let status: String
+    let location: String
+    var status: CustomerOrderStatus
     let etaMinutes: Int?
-    let isHistory: Bool
     let placedAt: Date
 }
 
@@ -362,15 +434,15 @@ struct OrderStatusRow: View {
                 Text(order.title)
                     .font(.headline)
                 Spacer()
-                Text(order.status)
+                Text(order.status.displayText)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(order.isHistory ? Color.secondary : Color.accentColor)
+                    .foregroundStyle(order.status == .delivered ? Color.secondary : Color.accentColor)
             }
             HStack(spacing: 8) {
-                Label(order.isHistory ? "已完成" : "預計抵達", systemImage: order.isHistory ? "checkmark.seal" : "clock")
+                Label(order.status == .delivered ? "已完成" : "預計抵達", systemImage: order.status == .delivered ? "checkmark.seal" : "clock")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if let eta = order.etaMinutes, !order.isHistory {
+                if let eta = order.etaMinutes, order.status != .delivered {
                     Text("約 \(eta) 分鐘")
                         .font(.caption)
                         .foregroundStyle(.secondary)

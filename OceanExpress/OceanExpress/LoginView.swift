@@ -178,7 +178,7 @@ struct LoginView: View {
 
         isLoading = true
 
-        let demoMode = true // 將來可改成 true 或偵測環境變數
+        let demoMode = Bool(ProcessInfo.processInfo.environment["DEMO_MODE"] ?? "") ?? true // 預設 demo，可用環境變數關閉
 
         if demoMode {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
