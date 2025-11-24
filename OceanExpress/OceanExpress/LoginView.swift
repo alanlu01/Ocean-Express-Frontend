@@ -5,7 +5,6 @@
 //  Created by 呂翰昇 on 2025/10/13.
 //
 
-
 import SwiftUI
 
 // MARK: - DTOs for Auth API (top-level to avoid @MainActor isolation in Swift 6)
@@ -13,9 +12,7 @@ struct LoginReq: Codable { let email: String; let password: String }
 struct APIUser: Codable { let id: Int; let email: String }
 struct LoginResp: Codable { let token: String; let user: APIUser }
 
-// Fallback placeholder to fix "Cannot find 'HomeView' in scope" during compilation
-// Remove this when the real `HomeView` file is included in the target.
-
+// 使用者角色
 enum AuthRole: String, CaseIterable, Identifiable {
     case customer
     case deliverer
@@ -40,8 +37,7 @@ enum AuthRole: String, CaseIterable, Identifiable {
     }
 }
 
-
-
+// MARK: - Login View
 struct LoginView: View {
     @State private var email: String = ""
     @State private var password: String = ""
@@ -131,16 +127,34 @@ struct LoginView: View {
                     .disabled(isLoading)
                     .padding(.horizontal, 32)
 
+                    // Google Login Button (demo placeholder)
+                    Button {
+                        googleLogin()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "g.circle")
+                            Text("使用 Google 登入")
+                                .fontWeight(.semibold)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(isLoading)
+                    .padding(.horizontal, 32)
+
                     // Register Link
                     HStack {
                         Text("Don't have an account?")
                             .foregroundColor(.gray)
-                        Button("Sign Up") {
-                            // 之後導向註冊頁
+                        NavigationLink {
+                            RegisterView()
+                        } label: {
+                            Text("Sign Up")
+                                .fontWeight(.semibold)
                         }
-                        .fontWeight(.semibold)
                     }
-                    .padding(.top, 12)
+                
 
                     Spacer()
                 }
@@ -167,6 +181,18 @@ struct LoginView: View {
     private func handleSwitchRole() {
         performLogout()
         role = .customer
+    }
+
+    /// Demo Google sign-in placeholder. Replace with real Google Sign-In SDK integration later.
+    func googleLogin() {
+        // TODO: Integrate GoogleSignIn SDK here and exchange Google ID token with your backend.
+        isLoading = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            // In a real flow, handle success/failure instead of auto-success.
+            UserDefaults.standard.set("google-demo-token", forKey: "auth_token")
+            isLoading = false
+            withAnimation { isLoggedIn = true }
+        }
     }
 
     func login() {
@@ -254,6 +280,86 @@ struct LoginView: View {
     LoginView()
 }
 
+// MARK: - Register View
+struct RegisterView: View {
+    @State private var name: String = ""
+    @State private var email: String = ""
+    @State private var password: String = ""
+    @State private var confirmPassword: String = ""
+
+    @State private var isLoading = false
+    @State private var showAlert = false
+    @State private var alertMessage = ""
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section(header: Text("基本資料")) {
+                    TextField("姓名", text: $name)
+                        .textInputAutocapitalization(.words)
+                    TextField("Email", text: $email)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField("密碼", text: $password)
+                    SecureField("再次輸入密碼", text: $confirmPassword)
+                }
+
+               Section {
+   
+                    Button {
+                        register()
+                    } label: {
+                        if isLoading {
+                            ProgressView()
+                        } else {
+                            Text("建立帳號")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        }
+                    }
+                    .disabled(isLoading)
+                    .listRowSeparator(.hidden)
+
+                    
+                }
+
+            }
+            .padding(.top, 12)   
+        }
+        .navigationTitle("註冊")
+        .alert(isPresented: $showAlert) {
+            Alert(title: Text("註冊結果"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+        }
+    }
+
+    private func register() {
+        guard !name.isEmpty, !email.isEmpty, !password.isEmpty, !confirmPassword.isEmpty else {
+            alertMessage = "請填寫所有欄位"
+            showAlert = true
+            return
+        }
+        guard password == confirmPassword else {
+            alertMessage = "兩次輸入的密碼不一致"
+            showAlert = true
+            return
+        }
+
+        // TODO: 將來可串接後端註冊 API
+        isLoading = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            isLoading = false
+            alertMessage = "(Demo) 註冊成功！請使用新帳號登入。"
+            showAlert = true
+            // 可視情況自動返回登入頁：
+            // dismiss()
+        }
+    }
+}
+
+// MARK: - Restaurant Placeholder View
 struct RestaurantComingSoonView: View {
     var body: some View {
         NavigationStack {

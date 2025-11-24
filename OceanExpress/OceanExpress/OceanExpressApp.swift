@@ -23,8 +23,10 @@ struct OceanExpressApp: App {
 
     var body: some Scene {
         WindowGroup {
-            LoginView()
-                .environmentObject(cart)
+            NavigationStack {
+                LoginView()
+            }
+            .environmentObject(cart)
         }
         .modelContainer(sharedModelContainer)
     }
