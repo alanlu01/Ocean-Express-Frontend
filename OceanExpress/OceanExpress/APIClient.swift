@@ -51,6 +51,7 @@ private struct AnyEncodable: Encodable {
 
 enum AuthAPI {
     struct LoginRequest: Encodable { let email: String; let password: String }
+    struct RegisterRequest: Encodable { let name: String; let email: String; let password: String }
     struct LoginResponse: Decodable {
         let token: String
         let user: APIUser
@@ -65,6 +66,10 @@ enum AuthAPI {
     static func login(email: String, password: String) async throws -> LoginResponse {
         let data = try await APIClient.request("auth/login", method: "POST", body: LoginRequest(email: email, password: password))
         return try JSONDecoder().decode(LoginResponse.self, from: data)
+    }
+
+    static func register(name: String, email: String, password: String) async throws {
+        _ = try await APIClient.request("auth/register", method: "POST", body: RegisterRequest(name: name, email: email, password: password))
     }
 }
 

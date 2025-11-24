@@ -23,6 +23,11 @@
     ```
   - 401: `{ "message": "invalid credentials", "code": "auth.invalid" }`
 
+- `POST /auth/register`
+  - body: `{ "name": "Demo User", "email": "user@example.com", "password": "..." }`
+  - 201: `{ "data": { "id": "u124", "email": "user@example.com", "role": "customer" } }`（也可直接回 token，前後端自行決定）
+  - 400: `{ "message": "email exists", "code": "auth.email_taken" }`
+
 ## 餐廳 & 菜單
 - `GET /restaurants`
   - 200:
