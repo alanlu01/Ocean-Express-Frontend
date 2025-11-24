@@ -48,129 +48,109 @@ struct LoginView: View {
     @State private var role: AuthRole = .customer
 
     var body: some View {
-        Group {
-            if isLoggedIn {
-                roleDestination(role)
-                    .transition(AnyTransition.slide)
-            } else {
-                VStack(spacing: 24) {
-                    // App Title
-                    Text("Ocean Express")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.tint)
-                        .padding(.top, 60)
+        NavigationStack {
+            Group {
+                if isLoggedIn {
+                    roleDestination(role)
+                        .transition(AnyTransition.slide)
+                } else {
+                    VStack(spacing: 24) {
+                        // App Title
+                        Text("Ocean Express")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.tint)
+                            .padding(.top, 60)
 
-                    // Email Field
-                    TextField("Email", text: $email, prompt: Text("Email"))
-                        .textContentType(.emailAddress)
-                        .keyboardType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .padding()
-                        .background(Color(.systemGray6))
-                        .cornerRadius(10)
-                        .padding(.horizontal, 32)
+                        // Email Field
+                        TextField("Email", text: $email, prompt: Text("Email"))
+                            .textContentType(.emailAddress)
+                            .keyboardType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .padding()
+                            .background(Color(.systemGray6))
+                            .cornerRadius(10)
+                            .padding(.horizontal, 32)
 
-                    // Password Field
-                    SecureField("Password", text: $password, prompt: Text("Password"))
-                        .textContentType(.password)
-                        .padding()
-                        .background(Color(.systemGray6))
-                        .cornerRadius(10)
-                        .padding(.horizontal, 32)
-                        .submitLabel(.go)
-                        .onSubmit { login() }
+                        // Password Field
+                        SecureField("Password", text: $password, prompt: Text("Password"))
+                            .textContentType(.password)
+                            .padding()
+                            .background(Color(.systemGray6))
+                            .cornerRadius(10)
+                            .padding(.horizontal, 32)
+                            .submitLabel(.go)
+                            .onSubmit { login() }
 
-                    // Role Selector
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("登入身分").font(.headline)
-                        HStack(spacing: 12) {
-                            ForEach(AuthRole.allCases) { option in
-                                Button {
-                                    role = option
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: option.icon)
-                                        Text(option.title)
+                        // Role Selector
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("登入身分").font(.headline)
+                            HStack(spacing: 12) {
+                                ForEach(AuthRole.allCases) { option in
+                                    Button {
+                                        role = option
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: option.icon)
+                                            Text(option.title)
+                                        }
+                                        .font(.subheadline.weight(.semibold))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 10)
+                                        .frame(maxWidth: .infinity)
+                                        .background(role == option ? Color.accentColor.opacity(0.15) : Color(.systemGray6))
+                                        .foregroundStyle(role == option ? Color.accentColor : Color.primary)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10)
+                                                .stroke(role == option ? Color.accentColor : Color.clear, lineWidth: 1)
+                                        )
                                     }
-                                    .font(.subheadline.weight(.semibold))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 10)
-                                    .frame(maxWidth: .infinity)
-                                    .background(role == option ? Color.accentColor.opacity(0.15) : Color(.systemGray6))
-                                    .foregroundStyle(role == option ? Color.accentColor : Color.primary)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .stroke(role == option ? Color.accentColor : Color.clear, lineWidth: 1)
-                                    )
                                 }
                             }
                         }
-                    }
-                    .padding(.horizontal, 32)
+                        .padding(.horizontal, 32)
 
-                    // Login Button
-                    Button(action: login) {
-                        if isLoading {
-                            ProgressView()
-                                .progressViewStyle(.circular)
-                        } else {
-                            Text("以 \(role.title) 登入")
-                                .fontWeight(.semibold)
-                                .frame(maxWidth: .infinity)
+                        // Login Button
+                        Button(action: login) {
+                            if isLoading {
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                            } else {
+                                Text("以 \(role.title) 登入")
+                                    .fontWeight(.semibold)
+                                    .frame(maxWidth: .infinity)
+                            }
                         }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .disabled(isLoading)
-                    .padding(.horizontal, 32)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(isLoading)
+                        .padding(.horizontal, 32)
 
-                    // Google Login Button (demo placeholder)
-                    Button {
-                        googleLogin()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "g.circle")
-                            Text("使用 Google 登入")
-                                .fontWeight(.semibold)
-                                .frame(maxWidth: .infinity)
+                        // Register Link
+                        HStack {
+                            Text("Don't have an account?")
+                                .foregroundColor(.gray)
+                            NavigationLink {
+                                RegisterView()
+                            } label: {
+                                Text("Sign Up")
+                                    .fontWeight(.semibold)
+                            }
                         }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .disabled(isLoading)
-                    .padding(.horizontal, 32)
 
-                    // Register Link
-                    HStack {
-                        Text("Don't have an account?")
-                            .foregroundColor(.gray)
-                        NavigationLink {
-                            RegisterView()
-                        } label: {
-                            Text("Sign Up")
-                                .fontWeight(.semibold)
-                        }
+                        Spacer()
                     }
-                
-
-                    Spacer()
                 }
             }
+            .tint(.accentColor)
+            .accentColor(.accentColor)
+            .animation(.default, value: isLoggedIn)
+            .alert(isPresented: $showAlert) {
+                Alert(title: Text("Login Error"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+            }
         }
-        .tint(.accentColor)
-        .accentColor(.accentColor)
-        .animation(.default, value: isLoggedIn)
-        .alert(isPresented: $showAlert) {
-            Alert(title: Text("Login Error"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
-        }
-    }
-
-    @MainActor
-    private func decodeLoginResp(_ data: Data) throws -> LoginResp {
-        try JSONDecoder().decode(LoginResp.self, from: data)
     }
 
     private func performLogout() {
@@ -183,18 +163,6 @@ struct LoginView: View {
         role = .customer
     }
 
-    /// Demo Google sign-in placeholder. Replace with real Google Sign-In SDK integration later.
-    func googleLogin() {
-        // TODO: Integrate GoogleSignIn SDK here and exchange Google ID token with your backend.
-        isLoading = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            // In a real flow, handle success/failure instead of auto-success.
-            UserDefaults.standard.set("google-demo-token", forKey: "auth_token")
-            isLoading = false
-            withAnimation { isLoggedIn = true }
-        }
-    }
-
     func login() {
         guard !email.isEmpty, !password.isEmpty else {
             alertMessage = "Please enter both email and password."
@@ -204,56 +172,36 @@ struct LoginView: View {
 
         isLoading = true
 
-        let demoMode = true // 將來可改成 true 或偵測環境變數
+        let isDemoLogin = email.lowercased() == "demo" && password == "demo"
 
-        if demoMode {
+        if isDemoLogin {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                alertMessage = "⚠️ Server unavailable — entering demo mode"
+                alertMessage = "⚠️ Demo 模式啟用"
                 showAlert = true
                 UserDefaults.standard.set("demo-token", forKey: "auth_token")
+                DemoConfig.setDemo(enabled: true)
                 isLoading = false
                 withAnimation { isLoggedIn = true }
             }
             return
+        } else {
+            DemoConfig.setDemo(enabled: false)
         }
 
-        let url = URL(string: "http://localhost:3000/auth/login")! // 部署後改為你的伺服器網址
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONEncoder().encode(LoginReq(email: email, password: password))
-
-        URLSession.shared.dataTask(with: req) { data, resp, err in
-            DispatchQueue.main.async { isLoading = false }
-
-            if let err = err {
-                showError("Network error: \(err.localizedDescription)")
-                return
-            }
-            guard let http = resp as? HTTPURLResponse, let data = data else {
-                showError("No response from server")
-                return
-            }
-
-            if (200..<300).contains(http.statusCode) {
-                Task { @MainActor in
-                    do {
-                        let result = try decodeLoginResp(data)
-                        UserDefaults.standard.set(result.token, forKey: "auth_token")
-                        withAnimation { isLoggedIn = true }
-                    } catch {
-                        alertMessage = "Response parse error"
-                        showAlert = true
-                    }
-                }
-            } else {
-                if let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String {
-                    showError(msg)
-                } else {
-                    showError("Login failed (\(http.statusCode))")
+        Task {
+            do {
+                let result = try await AuthAPI.login(email: email, password: password)
+                UserDefaults.standard.set(result.token, forKey: "auth_token")
+                isLoading = false
+                withAnimation { isLoggedIn = true }
+            } catch {
+                DispatchQueue.main.async {
+                    isLoading = false
+                    alertMessage = error.localizedDescription
+                    showAlert = true
                 }
             }
-        }.resume()
+        }
 
         func showError(_ msg: String) {
             DispatchQueue.main.async {
@@ -307,8 +255,7 @@ struct RegisterView: View {
                     SecureField("再次輸入密碼", text: $confirmPassword)
                 }
 
-               Section {
-   
+                Section {
                     Button {
                         register()
                     } label: {
@@ -322,12 +269,9 @@ struct RegisterView: View {
                     }
                     .disabled(isLoading)
                     .listRowSeparator(.hidden)
-
-                    
                 }
-
             }
-            .padding(.top, 12)   
+            .padding(.top, 12)
         }
         .navigationTitle("註冊")
         .alert(isPresented: $showAlert) {
@@ -347,14 +291,23 @@ struct RegisterView: View {
             return
         }
 
-        // TODO: 將來可串接後端註冊 API
         isLoading = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            isLoading = false
-            alertMessage = "(Demo) 註冊成功！請使用新帳號登入。"
-            showAlert = true
-            // 可視情況自動返回登入頁：
-            // dismiss()
+        Task {
+            do {
+                try await AuthAPI.register(name: name, email: email, password: password)
+                DispatchQueue.main.async {
+                    isLoading = false
+                    alertMessage = "註冊成功，請以新帳號登入。"
+                    showAlert = true
+                    dismiss()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    isLoading = false
+                    alertMessage = error.localizedDescription
+                    showAlert = true
+                }
+            }
         }
     }
 }
