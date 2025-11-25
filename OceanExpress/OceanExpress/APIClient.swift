@@ -56,6 +56,9 @@ enum AuthAPI {
         let token: String
         let user: APIUser
     }
+    struct LoginWrapper: Decodable {
+        let data: LoginResponse
+    }
 
     struct APIUser: Decodable {
         let id: String
@@ -65,7 +68,8 @@ enum AuthAPI {
 
     static func login(email: String, password: String) async throws -> LoginResponse {
         let data = try await APIClient.request("auth/login", method: "POST", body: LoginRequest(email: email, password: password))
-        return try JSONDecoder().decode(LoginResponse.self, from: data)
+        let wrapper = try JSONDecoder().decode(LoginWrapper.self, from: data)
+        return wrapper.data
     }
 
     static func register(name: String, email: String, password: String) async throws {
