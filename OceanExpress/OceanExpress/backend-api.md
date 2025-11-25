@@ -57,7 +57,8 @@
       "notes": "請在警衛室交付",
       "requestedTime": "2025-11-23T10:30:00Z"
     }
-    ```
+  ```
+  - 備註：`deliveryLocation.name` 為固定地點名稱，會原樣出現在外送員 API 的 `dropoff.name`。
   - 201: `{ "data": { "id": "ord-001", "status": "available", "etaMinutes": 20 } }`
 
 - `GET /orders?status=active|history` (auth: customer)
@@ -72,7 +73,8 @@
 ## 外送員（Deliverer）
 - `GET /delivery/available` (auth: deliverer)
   - 回傳可接單列表，包含商家與送達位置座標：  
-    `{ "data": [ { "id": "ord-001", "code": "A1-892", "fee": 85, "distanceKm": 1.2, "etaMinutes": 12, "status": "available", "merchant": { "name": "...", "address": "...", "lat": 25.0, "lng": 121.5 }, "customer": { "name": "...", "phone": "...", "address": "...", "lat": 25.01, "lng": 121.53 }, "dropoff": { "name": "...", "address": "...", "lat": 25.01, "lng": 121.53 } } ] }`
+    `{ "data": [ { "id": "ord-001", "code": "A1-892", "fee": 85, "distanceKm": 1.2, "etaMinutes": 12, "status": "available", "merchant": { "name": "...", "lat": 25.0, "lng": 121.5 }, "customer": { "name": "...", "phone": "...", "lat": 25.01, "lng": 121.53 }, "dropoff": { "name": "...", "lat": 25.01, "lng": 121.53 } } ] }`
+  - 欄位說明：`dropoff.name` 直接來自買家下單時的 `deliveryLocation.name`；無 address，若無座標則前端僅顯示名稱。
 
 - `POST /delivery/:id/accept` (auth: deliverer)
   - 200: `{ "data": { ...DeliveryTask 同上..., "status": "assigned" } }`
@@ -100,8 +102,3 @@
 - Order: `{ id, restaurantId, userId, items[], status, etaMinutes?, placedAt, requestedTime?, deliveryLocation{name,lat?,lng?}, notes? }`
 - DeliveryTask（可共用 order id）：`{ id, riderId, status, merchant{}, customer{}, history[] }`
 
-## 後端實作提示
-- Mongo 索引：`restaurants.name`、`menu_items.restaurantId`、`orders.userId`、`orders.status`、`delivery_tasks.status`、`delivery_tasks.riderId`.
-- 密碼：bcrypt；JWT payload 建議含 `sub`(userId)、`role`、`exp`.
-- 狀態流轉：`available -> assigned -> en_route_to_pickup -> picked_up -> delivering -> delivered`；`cancelled` 可由客戶/餐廳/外送員依規則觸發。
-- 种子帳號：可預放 demo/demo（customer）、rider/rider（deliverer）以便前後端測試。

@@ -85,11 +85,10 @@ components:
       type: object
       properties:
         name: { type: string }
-        address: { type: string }
         lat: { type: number, format: double, nullable: true }
         lng: { type: number, format: double, nullable: true }
         phone: { type: string, nullable: true }
-      required: [name, address]
+      required: [name]
     DeliveryTask:
       type: object
       properties:

@@ -52,17 +52,14 @@ enum OrderStatus: String, Codable, CaseIterable, Identifiable {
 
 struct Place: Hashable {
     var name: String
-    var address: String
     var coordinate: CLLocationCoordinate2D
     static func == (lhs: Place, rhs: Place) -> Bool {
         lhs.name == rhs.name &&
-        lhs.address == rhs.address &&
         lhs.coordinate.latitude == rhs.coordinate.latitude &&
         lhs.coordinate.longitude == rhs.coordinate.longitude
     }
     func hash(into hasher: inout Hasher) {
         hasher.combine(name)
-        hasher.combine(address)
         hasher.combine(coordinate.latitude)
         hasher.combine(coordinate.longitude)
     }
@@ -71,7 +68,6 @@ struct Place: Hashable {
 struct Customer: Hashable {
     var displayName: String
     var phone: String
-    var address: String
 }
 
 struct Order: Identifiable, Hashable {
@@ -222,13 +218,13 @@ final class MockOrderService: OrderServiceProtocol {
     }
 
     nonisolated static func sampleOrders() -> [Order] {
-        let merchant1 = Place(name: "小林便當 - 公館店", address: "台北市中正區羅斯福路四段1號", coordinate: .init(latitude: 25.0143, longitude: 121.5323))
-        let drop1 = Place(name: "台大電機系館", address: "台北市大安區辛亥路二段1號", coordinate: .init(latitude: 25.0172, longitude: 121.5395))
-        let cust1 = Customer(displayName: "王先生", phone: "0912-345-678", address: drop1.address)
+        let merchant1 = Place(name: "小林便當 - 公館店", coordinate: .init(latitude: 25.0143, longitude: 121.5323))
+        let drop1 = Place(name: "台大電機系館", coordinate: .init(latitude: 25.0172, longitude: 121.5395))
+        let cust1 = Customer(displayName: "王先生", phone: "0912-345-678")
 
-        let merchant2 = Place(name: "珍煮丹 - 羅斯福店", address: "台北市中正區羅斯福路三段100號", coordinate: .init(latitude: 25.0211, longitude: 121.5280))
-        let drop2 = Place(name: "公館捷運站出口2", address: "台北市中正區羅斯福路四段", coordinate: .init(latitude: 25.0149, longitude: 121.5331))
-        let cust2 = Customer(displayName: "林小姐", phone: "0988-555-666", address: drop2.address)
+        let merchant2 = Place(name: "珍煮丹 - 羅斯福店", coordinate: .init(latitude: 25.0211, longitude: 121.5280))
+        let drop2 = Place(name: "公館捷運站出口2", coordinate: .init(latitude: 25.0149, longitude: 121.5331))
+        let cust2 = Customer(displayName: "林小姐", phone: "0988-555-666")
 
         let now = Date()
 
@@ -311,11 +307,11 @@ extension DelivererAPI.Stop {
     }
 
     func toPlace() -> Place {
-        Place(name: name, address: address, coordinate: coordinate)
+        Place(name: name, coordinate: coordinate)
     }
 
     func toCustomer() -> Customer {
-        Customer(displayName: name, phone: phone ?? "", address: address)
+        Customer(displayName: name, phone: phone ?? "")
     }
 }
 
@@ -326,9 +322,9 @@ extension DelivererAPI.Task {
             fee: fee ?? 0,
             distanceKm: distanceKm ?? 0,
             etaMinutes: etaMinutes ?? 0,
-            merchant: merchant?.toPlace() ?? Place(name: "未知店家", address: "", coordinate: defaultCoordinate),
-            customer: customer?.toCustomer() ?? Customer(displayName: "顧客", phone: "", address: dropoff?.address ?? customer?.address ?? ""),
-            dropoff: (dropoff ?? customer)?.toPlace() ?? Place(name: "送達地點", address: "", coordinate: defaultCoordinate),
+            merchant: merchant?.toPlace() ?? Place(name: "未知店家", coordinate: defaultCoordinate),
+            customer: customer?.toCustomer() ?? Customer(displayName: "顧客", phone: ""),
+            dropoff: (dropoff ?? customer)?.toPlace() ?? Place(name: "送達地點", coordinate: defaultCoordinate),
             notes: notes ?? "",
             canPickup: canPickup ?? true,
             status: OrderStatus(rawValue: status ?? "") ?? .available
@@ -553,14 +549,13 @@ struct OrderCard: View {
                 Image(systemName: "house")
                 VStack(alignment: .leading) {
                     Text(order.merchant.name).font(.subheadline)
-                    Text(order.merchant.address).font(.caption).foregroundStyle(.secondary)
                 }
             }
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "person")
                 VStack(alignment: .leading) {
                     Text(order.customer.displayName).font(.subheadline)
-                    Text(order.dropoff.address).font(.caption).foregroundStyle(.secondary)
+                    Text(order.dropoff.name).font(.caption).foregroundStyle(.secondary)
                 }
             }
             if !order.notes.isEmpty {
@@ -588,24 +583,29 @@ struct OrderCard: View {
 
 struct ActiveTasksView: View {
     @EnvironmentObject var app: AppState
+    @EnvironmentObject var loc: LocationManager
 
     var body: some View {
         NavigationStack {
-            if app.activeTasks.isEmpty {
-                ContentUnavailableView("尚無進行中任務", systemImage: "tray")
-            } else {
-                List(app.activeTasks) { order in
-                    VStack(alignment: .leading, spacing: 8) {
-                        NavigationLink(value: order) {
-                            OrderProgressRow(order: order)
+            Group {
+                if app.activeTasks.isEmpty {
+                    ContentUnavailableView("尚無進行中任務", systemImage: "tray")
+                } else {
+                    List(app.activeTasks) { order in
+                        VStack(alignment: .leading, spacing: 8) {
+                            NavigationLink(value: order) {
+                                OrderProgressRow(order: order)
+                            }
                         }
+                        .padding(.vertical, 4)
                     }
-                    .padding(.vertical, 4)
                 }
-                .navigationDestination(for: Order.self) { order in
-                    OrderDetailView(order: order)
-                }
-                .navigationTitle("進行中任務")
+            }
+            .navigationTitle("進行中任務")
+            .navigationDestination(for: Order.self) { order in
+                OrderDetailView(order: order)
+                    .environmentObject(app)
+                    .environmentObject(loc)
             }
         }
     }
@@ -725,9 +725,8 @@ struct OrderDetailView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 InfoRow(title: "顧客", value: "\(liveOrder.customer.displayName)  (☎︎ \(liveOrder.customer.phone))")
-                InfoRow(title: "送達地址", value: liveOrder.dropoff.address)
+                InfoRow(title: "送達地點", value: liveOrder.dropoff.name)
                 InfoRow(title: "商家", value: liveOrder.merchant.name)
-                InfoRow(title: "商家地址", value: liveOrder.merchant.address)
                 InfoRow(title: "備註", value: liveOrder.notes.isEmpty ? "無" : liveOrder.notes)
                 InfoRow(title: "取餐狀態", value: liveOrder.canPickup ? "可取餐" : "準備中")
                 Divider()
@@ -961,7 +960,7 @@ struct HistoryView: View {
                                     Spacer()
                                     Text("$\(Int(order.fee))")
                                 }
-                                Text(order.dropoff.address).font(.caption).foregroundStyle(.secondary)
+                                Text(order.dropoff.name).font(.caption).foregroundStyle(.secondary)
                             }
                         }
                     }

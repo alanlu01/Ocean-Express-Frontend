@@ -228,7 +228,6 @@ enum OrderAPI {
 enum DelivererAPI {
     struct Stop: Decodable {
         let name: String
-        let address: String
         let lat: Double?
         let lng: Double?
         let phone: String?
