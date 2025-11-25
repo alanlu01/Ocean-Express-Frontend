@@ -223,6 +223,82 @@ enum OrderAPI {
     private struct OrderDetailWrapper: Decodable { let data: OrderDetail }
 }
 
+// MARK: - Deliverer
+
+enum DelivererAPI {
+    struct Stop: Decodable {
+        let name: String
+        let address: String
+        let lat: Double?
+        let lng: Double?
+        let phone: String?
+    }
+
+    struct Task: Decodable {
+        let id: String?
+        let code: String?
+        let fee: Double?
+        let distanceKm: Double?
+        let etaMinutes: Int?
+        let status: String?
+        let notes: String?
+        let canPickup: Bool?
+        let createdAt: Date?
+        let merchant: Stop?
+        let customer: Stop?
+        let dropoff: Stop?
+    }
+
+    private struct ListWrapper: Decodable { let data: [Task] }
+    private struct ItemWrapper: Decodable { let data: Task }
+    private struct StatusWrapper: Decodable {
+        struct StatusData: Decodable { let status: String }
+        let data: StatusData
+    }
+
+    private static let decoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }()
+
+    static func fetchAvailable(token: String?) async throws -> [Task] {
+        let data = try await APIClient.request("delivery/available", token: token)
+        if let wrapper = try? decoder.decode(ListWrapper.self, from: data) {
+            return wrapper.data
+        }
+        return []
+    }
+
+    static func fetchActive(token: String?) async throws -> [Task] {
+        let data = try await APIClient.request("delivery/active", token: token)
+        if let wrapper = try? decoder.decode(ListWrapper.self, from: data) {
+            return wrapper.data
+        }
+        return []
+    }
+
+    static func accept(id: String, token: String?) async throws -> Task? {
+        let data = try await APIClient.request("delivery/\(id)/accept", method: "POST", token: token)
+        if let wrapper = try? decoder.decode(ItemWrapper.self, from: data) {
+            return wrapper.data
+        }
+        return nil
+    }
+
+    static func updateStatus(id: String, status: String, token: String?) async throws -> Task? {
+        struct StatusBody: Encodable { let status: String }
+        let data = try await APIClient.request("delivery/\(id)/status", method: "PATCH", token: token, body: StatusBody(status: status))
+        if let wrapper = try? decoder.decode(ItemWrapper.self, from: data) {
+            return wrapper.data
+        }
+        if let status = try? decoder.decode(StatusWrapper.self, from: data) {
+            return Task(id: id, code: nil, fee: nil, distanceKm: nil, etaMinutes: nil, status: status.data.status, notes: nil, canPickup: nil, createdAt: nil, merchant: nil, customer: nil, dropoff: nil)
+        }
+        return nil
+    }
+}
+
 extension RestaurantAPI.MenuItemDTO {
     func toMenuItem() -> MenuItem {
         MenuItem(

@@ -75,12 +75,12 @@ struct Customer: Hashable {
 }
 
 struct Order: Identifiable, Hashable {
-    var id: UUID = UUID()
+    var id: String = UUID().uuidString
     var code: String // 顯示編號用
     var fee: Double // 外送費
     var distanceKm: Double // 粗估距離（列表展示）
     var etaMinutes: Int // 粗估時間（列表展示）
-    var createdAt: Date
+    var createdAt: Date = Date()
 
     var merchant: Place
     var customer: Customer
@@ -93,6 +93,9 @@ struct Order: Identifiable, Hashable {
     var routePolyline: MKPolyline? = nil
 
     var isActive: Bool { status != .delivered && status != .cancelled }
+
+    static func == (lhs: Order, rhs: Order) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 
@@ -142,12 +145,72 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     }
 }
 
-// MARK: - Services (Mock)
+// MARK: - Services (API + Mock)
 
 protocol OrderServiceProtocol {
     func streamAvailableOrders() -> AsyncStream<[Order]>
+    func fetchActiveTasks() async throws -> [Order]
     func accept(order: Order) async throws -> Order
     func updateStatus(order: Order, to status: OrderStatus) async throws -> Order
+}
+
+@MainActor
+final class NetworkOrderService: OrderServiceProtocol {
+    private let tokenProvider: () -> String?
+    private let pollInterval: Duration = .seconds(6)
+
+    init(tokenProvider: @escaping () -> String?) {
+        self.tokenProvider = tokenProvider
+    }
+
+    func streamAvailableOrders() -> AsyncStream<[Order]> {
+        let tokenProvider = self.tokenProvider
+        return AsyncStream { continuation in
+            let task = Task {
+                while !Task.isCancelled {
+                    do {
+                        guard let token = tokenProvider(), !token.isEmpty else {
+                            continuation.yield([])
+                            try? await Task.sleep(for: pollInterval)
+                            continue
+                        }
+                        let list = try await DelivererAPI.fetchAvailable(token: token)
+                        continuation.yield(list.map { $0.toOrder() })
+                    } catch {
+                        print("Available orders fetch error:", error)
+                    }
+                    try? await Task.sleep(for: pollInterval)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    func fetchActiveTasks() async throws -> [Order] {
+        guard let token = tokenProvider(), !token.isEmpty else { return [] }
+        let list = try await DelivererAPI.fetchActive(token: token)
+        return list.map { $0.toOrder() }
+    }
+
+    func accept(order: Order) async throws -> Order {
+        let token = tokenProvider()
+        if let task = try await DelivererAPI.accept(id: order.id, token: token) {
+            return task.toOrder(overrides: order)
+        }
+        var updated = order
+        updated.status = .assigned
+        return updated
+    }
+
+    func updateStatus(order: Order, to status: OrderStatus) async throws -> Order {
+        let token = tokenProvider()
+        if let task = try await DelivererAPI.updateStatus(id: order.id, status: status.rawValue, token: token) {
+            return task.toOrder(overrides: order)
+        }
+        var updated = order
+        updated.status = status
+        return updated
+    }
 }
 
 @MainActor
@@ -204,6 +267,10 @@ final class MockOrderService: OrderServiceProtocol {
         }
     }
 
+    func fetchActiveTasks() async throws -> [Order] {
+        available.filter { $0.isActive }
+    }
+
     func accept(order: Order) async throws -> Order {
         var updated = order
         updated.status = .assigned
@@ -225,12 +292,71 @@ final class StubOrderService: OrderServiceProtocol {
         }
     }
 
+    func fetchActiveTasks() async throws -> [Order] { [] }
+
     func accept(order: Order) async throws -> Order { order }
 
     func updateStatus(order: Order, to status: OrderStatus) async throws -> Order {
         var updated = order
         updated.status = status
         return updated
+    }
+}
+
+private let defaultCoordinate = CLLocationCoordinate2D(latitude: 0, longitude: 0)
+
+extension DelivererAPI.Stop {
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: lat ?? 0, longitude: lng ?? 0)
+    }
+
+    func toPlace() -> Place {
+        Place(name: name, address: address, coordinate: coordinate)
+    }
+
+    func toCustomer() -> Customer {
+        Customer(displayName: name, phone: phone ?? "", address: address)
+    }
+}
+
+extension DelivererAPI.Task {
+    func toOrder(overrides existing: Order? = nil) -> Order {
+        var base = existing ?? Order(
+            code: code ?? (id ?? "N/A"),
+            fee: fee ?? 0,
+            distanceKm: distanceKm ?? 0,
+            etaMinutes: etaMinutes ?? 0,
+            merchant: merchant?.toPlace() ?? Place(name: "未知店家", address: "", coordinate: defaultCoordinate),
+            customer: customer?.toCustomer() ?? Customer(displayName: "顧客", phone: "", address: dropoff?.address ?? customer?.address ?? ""),
+            dropoff: (dropoff ?? customer)?.toPlace() ?? Place(name: "送達地點", address: "", coordinate: defaultCoordinate),
+            notes: notes ?? "",
+            canPickup: canPickup ?? true,
+            status: OrderStatus(rawValue: status ?? "") ?? .available
+        )
+        base.id = id ?? existing?.id ?? UUID().uuidString
+        base.code = code ?? base.code
+        base.fee = fee ?? base.fee
+        base.distanceKm = distanceKm ?? base.distanceKm
+        base.etaMinutes = etaMinutes ?? base.etaMinutes
+        base.notes = notes ?? base.notes
+        base.canPickup = canPickup ?? base.canPickup
+        if let createdAt { base.createdAt = createdAt }
+        if let newStatus = OrderStatus(rawValue: status ?? "") {
+            base.status = newStatus
+        }
+        if let merchantPlace = merchant?.toPlace() {
+            base.merchant = merchantPlace
+        }
+        if let customerStop = customer {
+            base.customer = customerStop.toCustomer()
+            if dropoff == nil {
+                base.dropoff = customerStop.toPlace()
+            }
+        }
+        if let dropStop = dropoff {
+            base.dropoff = dropStop.toPlace()
+        }
+        return base
     }
 }
 
@@ -249,8 +375,9 @@ final class AppState: ObservableObject {
 
     init(service: any OrderServiceProtocol) {
         self.service = service
-        self.dailyEarnings = Self.mockEarnings()
+        self.dailyEarnings = []
         startStreaming()
+        Task { await refreshTasks() }
     }
 
     deinit { streamTask?.cancel() }
@@ -272,6 +399,7 @@ final class AppState: ObservableObject {
             availableOrders.removeAll { $0.id == order.id }
             activeTasks.append(accepted)
             selectedOrder = accepted
+            await refreshTasks()
         } catch {
             print("Accept error: \(error)")
         }
@@ -289,7 +417,7 @@ final class AppState: ObservableObject {
                     let finished = activeTasks.remove(at: idx)
                     history.insert(finished, at: 0)
                     // 結帳：累計收入
-                    let today = Calendar.current.startOfDay(for: Date())
+                    let today = Calendar.current.startOfDay(for: finished.createdAt)
                     if let eidx = dailyEarnings.firstIndex(where: { Calendar.current.isDate($0.date, inSameDayAs: today) }) {
                         dailyEarnings[eidx].amount += finished.fee
                     } else {
@@ -297,17 +425,33 @@ final class AppState: ObservableObject {
                     }
                 }
             }
+            await refreshTasks()
         } catch {
             print("Status update error: \(error)")
         }
     }
 
-    static func mockEarnings() -> [DailyEarning] {
+    func refreshTasks() async {
+        do {
+            let tasks = try await service.fetchActiveTasks()
+            let actives = tasks.filter { $0.isActive }
+            let histories = tasks.filter { !$0.isActive }
+            activeTasks = actives
+            history = histories.sorted { $0.createdAt < $1.createdAt }
+            dailyEarnings = AppState.computeEarnings(from: histories)
+        } catch {
+            print("Fetch tasks error:", error)
+        }
+    }
+
+    private static func computeEarnings(from orders: [Order]) -> [DailyEarning] {
+        var accumulator: [Date: Double] = [:]
         let cal = Calendar.current
-        return (0..<10).map { i in
-            let d = cal.date(byAdding: .day, value: -i, to: Date())!
-            return DailyEarning(date: cal.startOfDay(for: d), amount: Double(Int.random(in: 350...1200)))
-        }.sorted { $0.date < $1.date }
+        orders.forEach { order in
+            let day = cal.startOfDay(for: order.createdAt)
+            accumulator[day, default: 0] += order.fee
+        }
+        return accumulator.map { DailyEarning(date: $0.key, amount: $0.value) }.sorted { $0.date < $1.date }
     }
 }
 
@@ -321,7 +465,8 @@ final class AppState: ObservableObject {
     
 
     init(onLogout: @escaping () -> Void = {}, onSwitchRole: @escaping () -> Void = {}) {
-        let service: OrderServiceProtocol = DemoConfig.isEnabled ? MockOrderService() : StubOrderService()
+        let tokenProvider = { UserDefaults.standard.string(forKey: "auth_token") }
+        let service: OrderServiceProtocol = DemoConfig.isEnabled ? MockOrderService() : NetworkOrderService(tokenProvider: tokenProvider)
         _appState = StateObject(wrappedValue: AppState(service: service))
         _loc = StateObject(wrappedValue: LocationManager())
         self.onLogout = onLogout
@@ -336,6 +481,7 @@ final class AppState: ObservableObject {
 }
 
 struct RootView: View {
+    @EnvironmentObject var app: AppState
     @EnvironmentObject var loc: LocationManager
     var onLogout: () -> Void
     var onSwitchRole: () -> Void
@@ -354,6 +500,9 @@ struct RootView: View {
                 .tabItem { Label("設定", systemImage: "gearshape") }
         }
         .onAppear { loc.request() }
+        .task {
+            await app.refreshTasks()
+        }
     }
 }
 

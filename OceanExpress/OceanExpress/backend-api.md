@@ -5,7 +5,7 @@
 
 ## 環境變數
 - `API_BASE_URL`：前端用來組 API 位址（預設 http://localhost:3000）。  
-- `DEMO_MODE`：true/1/yes 強制 demo 模式（前端會用本地假資料）。正式環境請關閉。
+- `DEMO_MODE`：true/1/yes 強制 demo 模式（前端會用本地假資料）。正式環境請關閉；Deliverer 介面在非 Demo 狀態下會直接呼叫以下配送 API。
 
 ## 通用規範
 - 認證：JWT，受保護路由需 `Authorization: Bearer <token>`.
@@ -71,17 +71,18 @@
 
 ## 外送員（Deliverer）
 - `GET /delivery/available` (auth: deliverer)
-  - 200: `{ "data": [ { "id": "ord-001", "code": "A1-892", "fee": 85, "distanceKm": 1.2, "etaMinutes": 12, "merchant": { "name": "...", "address": "...", "lat": 25.0, "lng": 121.5 }, "customer": { "name": "...", "phone": "...", "address": "..." } } ] }`
+  - 回傳可接單列表，包含商家與送達位置座標：  
+    `{ "data": [ { "id": "ord-001", "code": "A1-892", "fee": 85, "distanceKm": 1.2, "etaMinutes": 12, "status": "available", "merchant": { "name": "...", "address": "...", "lat": 25.0, "lng": 121.5 }, "customer": { "name": "...", "phone": "...", "address": "...", "lat": 25.01, "lng": 121.53 }, "dropoff": { "name": "...", "address": "...", "lat": 25.01, "lng": 121.53 } } ] }`
 
 - `POST /delivery/:id/accept` (auth: deliverer)
-  - 200: `{ "data": { "status": "assigned" } }`
+  - 200: `{ "data": { ...DeliveryTask 同上..., "status": "assigned" } }`
 
 - `GET /delivery/active` (auth: deliverer)
-  - 200: 回傳該外送員的進行中/歷史任務列表。
+  - 200: 回傳該外送員的任務列表（包含已完成、已取消，前端會自行區分 active/history）。
 
 - `PATCH /delivery/:id/status` (auth: deliverer)
   - body: `{ "status": "en_route_to_pickup|picked_up|delivering|delivered|cancelled" }`
-  - 200: `{ "data": { "status": "<status>" } }`
+  - 200: `{ "data": { ...DeliveryTask 同上..., "status": "<status>" } }`
 
 - （可選）`POST /delivery/:id/location` (auth: deliverer)
   - body: `{ "lat": 25.0, "lng": 121.5, "heading": 180 }`
