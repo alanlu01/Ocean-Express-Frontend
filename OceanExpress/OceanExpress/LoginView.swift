@@ -191,6 +191,7 @@ struct LoginView: View {
         Task {
             do {
                 let result = try await AuthAPI.login(email: email, password: password)
+                DemoConfig.setDemo(enabled: false)
                 UserDefaults.standard.set(result.token, forKey: "auth_token")
                 isLoading = false
                 withAnimation { isLoggedIn = true }

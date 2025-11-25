@@ -93,6 +93,32 @@ enum RestaurantAPI {
         let price: Double
         let sizes: [String]?
         let spicinessOptions: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, description, price, sizes, spicinessOptions, _id
+        }
+
+        enum OIDKeys: String, CodingKey {
+            case oid = "$oid"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if let id = try? container.decode(String.self, forKey: .id) {
+                self.id = id
+            } else if let oidContainer = try? container.nestedContainer(keyedBy: OIDKeys.self, forKey: ._id) {
+                self.id = try oidContainer.decode(String.self, forKey: .oid)
+            } else if let rawId = try? container.decode(String.self, forKey: ._id) {
+                self.id = rawId
+            } else {
+                self.id = UUID().uuidString
+            }
+            name = try container.decode(String.self, forKey: .name)
+            description = try container.decode(String.self, forKey: .description)
+            price = try container.decode(Double.self, forKey: .price)
+            sizes = try? container.decode([String].self, forKey: .sizes)
+            spicinessOptions = try? container.decode([String].self, forKey: .spicinessOptions)
+        }
     }
 
     static func fetchRestaurants() async throws -> [RestaurantSummary] {
@@ -103,8 +129,10 @@ enum RestaurantAPI {
 
     static func fetchMenu(restaurantId: String) async throws -> [MenuItemDTO] {
         let data = try await APIClient.request("restaurants/\(restaurantId)/menu")
-        let wrapper = try JSONDecoder().decode(MenuListResponse.self, from: data)
-        return wrapper.items
+        if let wrapper = try? JSONDecoder().decode(MenuListResponse.self, from: data) {
+            return wrapper.items
+        }
+        return try JSONDecoder().decode([MenuItemDTO].self, from: data)
     }
 
     private struct RestaurantListResponse: Decodable { let data: [RestaurantSummary] }
@@ -116,6 +144,7 @@ enum RestaurantAPI {
 enum OrderAPI {
     struct CreateOrderItem: Encodable {
         let menuItemId: String
+        let name: String
         let size: String
         let spiciness: String
         let addDrink: Bool

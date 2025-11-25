@@ -168,9 +168,12 @@ fileprivate struct RestaurantMenuView: View {
         defer { isLoading = false }
         if DemoConfig.isEnabled { return }
         do {
+            print("🚀 RestaurantMenuView: fetching menu for \(restaurantId)")
             let data = try await RestaurantAPI.fetchMenu(restaurantId: restaurantId)
+            print("✅ RestaurantMenuView: received \(data.count) items for \(restaurantId)")
             items = data.map { $0.toMenuItem() }
         } catch {
+            print("⚠️ RestaurantMenuView.loadMenu error:", error)
             // 保留樣本
         }
     }
@@ -327,7 +330,7 @@ struct DeliverySetupView: View {
                 }
                 let token = UserDefaults.standard.string(forKey: "auth_token")
                 let itemsPayload = cart.items.map {
-                    OrderAPI.CreateOrderItem(menuItemId: $0.item.id.uuidString, size: $0.size, spiciness: $0.spiciness, addDrink: $0.addDrink, quantity: $0.quantity)
+                    OrderAPI.CreateOrderItem(menuItemId: $0.item.id.uuidString, name: $0.item.name, size: $0.size, spiciness: $0.spiciness, addDrink: $0.addDrink, quantity: $0.quantity)
                 }
                 let payload = OrderAPI.CreateOrderPayload(
                     restaurantId: restaurantId,
