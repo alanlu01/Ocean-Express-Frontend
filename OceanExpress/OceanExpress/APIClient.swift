@@ -17,6 +17,10 @@ struct APIError: Error, LocalizedError {
 enum APIClient {
     static func request(_ path: String, method: String = "GET", token: String? = nil, body: Encodable? = nil) async throws -> Data {
         let url = APIConfig.baseURL.appendingPathComponent(path)
+        return try await request(url: url, method: method, token: token, body: body)
+    }
+
+    static func request(url: URL, method: String = "GET", token: String? = nil, body: Encodable? = nil) async throws -> Data {
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -143,7 +147,6 @@ enum RestaurantAPI {
 
 enum OrderAPI {
     struct CreateOrderItem: Encodable {
-        let menuItemId: String
         let name: String
         let size: String
         let spiciness: String
@@ -159,11 +162,65 @@ enum OrderAPI {
         let requestedTime: String?
     }
 
-    struct DeliveryLocationPayload: Encodable { let name: String }
+    struct DeliveryLocationPayload: Codable { let name: String }
 
     static func createOrder(payload: CreateOrderPayload, token: String?) async throws {
         _ = try await APIClient.request("orders", method: "POST", token: token, body: payload)
     }
+
+    struct OrderSummary: Decodable {
+        let id: String
+        let restaurantName: String
+        let status: String
+        let etaMinutes: Int?
+        let placedAt: String
+    }
+
+    struct OrderDetail: Decodable {
+        let id: String
+        let restaurantName: String?
+        let status: String
+        let etaMinutes: Int?
+        let placedAt: String
+        let items: [OrderItem]?
+        let deliveryLocation: DeliveryLocationPayload?
+        let notes: String?
+        let requestedTime: String?
+    }
+
+    struct OrderItem: Decodable {
+        let name: String
+        let size: String?
+        let spiciness: String?
+        let addDrink: Bool?
+        let quantity: Int?
+    }
+
+    static func fetchOrders(status: String? = nil, token: String?) async throws -> [OrderSummary] {
+        var components = URLComponents(url: APIConfig.baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/orders"
+        if let status {
+            components?.queryItems = [URLQueryItem(name: "status", value: status)]
+        }
+        guard let url = components?.url else { throw APIError(message: "Invalid orders URL") }
+
+        let data = try await APIClient.request(url: url, token: token)
+        let wrapper = try JSONDecoder().decode(OrderListWrapper.self, from: data)
+        return wrapper.data
+    }
+
+    static func fetchOrderDetail(id: String, token: String?) async throws -> OrderDetail {
+        var components = URLComponents(url: APIConfig.baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/orders/\(id)"
+        guard let url = components?.url else { throw APIError(message: "Invalid order detail URL") }
+
+        let data = try await APIClient.request(url: url, token: token)
+        let wrapper = try JSONDecoder().decode(OrderDetailWrapper.self, from: data)
+        return wrapper.data
+    }
+
+    private struct OrderListWrapper: Decodable { let data: [OrderSummary] }
+    private struct OrderDetailWrapper: Decodable { let data: OrderDetail }
 }
 
 extension RestaurantAPI.MenuItemDTO {

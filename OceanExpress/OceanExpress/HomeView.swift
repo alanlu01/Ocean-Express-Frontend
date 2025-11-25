@@ -330,7 +330,7 @@ struct DeliverySetupView: View {
                 }
                 let token = UserDefaults.standard.string(forKey: "auth_token")
                 let itemsPayload = cart.items.map {
-                    OrderAPI.CreateOrderItem(menuItemId: $0.item.id.uuidString, name: $0.item.name, size: $0.size, spiciness: $0.spiciness, addDrink: $0.addDrink, quantity: $0.quantity)
+                    OrderAPI.CreateOrderItem(name: $0.item.name, size: $0.size, spiciness: $0.spiciness, addDrink: $0.addDrink, quantity: $0.quantity)
                 }
                 let payload = OrderAPI.CreateOrderPayload(
                     restaurantId: restaurantId,
@@ -342,6 +342,7 @@ struct DeliverySetupView: View {
                 try await OrderAPI.createOrder(payload: payload, token: token)
                 cart.clear()
                 selectedTab = .status
+                await orderStore.refresh(token: token)
                 dismiss()
             } catch {
                 errorMessage = error.localizedDescription
@@ -365,6 +366,7 @@ struct DeliveryLocation: Identifiable, Hashable {
 
 struct OrderStatusView: View {
     @EnvironmentObject private var orderStore: CustomerOrderStore
+    @State private var isLoading = false
 
     var body: some View {
         NavigationStack {
@@ -386,7 +388,21 @@ struct OrderStatusView: View {
                 }
             }
             .navigationTitle("訂單狀態")
+            .task {
+                await refreshOrders()
+            }
+            .refreshable {
+                await refreshOrders()
+            }
         }
+    }
+
+    private func refreshOrders() async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+        let token = UserDefaults.standard.string(forKey: "auth_token")
+        await orderStore.refresh(token: token)
     }
 }
 
@@ -437,8 +453,21 @@ final class CustomerOrderStore: ObservableObject {
     @Published var activeOrders: [CustomerOrder] = []
     @Published var historyOrders: [CustomerOrder] = []
 
+    func refresh(token: String?) async {
+        do {
+            let actives = try await OrderAPI.fetchOrders(status: "active", token: token)
+            let histories = try await OrderAPI.fetchOrders(status: "history", token: token)
+            await MainActor.run {
+                activeOrders = actives.map { $0.toCustomerOrder(isHistory: false) }
+                historyOrders = histories.map { $0.toCustomerOrder(isHistory: true) }
+            }
+        } catch {
+            print("⚠️ refresh orders failed:", error)
+        }
+    }
+
     func addDemoOrder(title: String, location: String, etaMinutes: Int) {
-        let order = CustomerOrder(title: title, location: location, status: .preparing, etaMinutes: etaMinutes, placedAt: Date())
+        let order = CustomerOrder(id: UUID().uuidString, title: title, location: location, status: .preparing, etaMinutes: etaMinutes, placedAt: Date())
         activeOrders.append(order)
         // 模擬狀態更新：10 秒後配送中，再 10 秒後已送達
         scheduleLocalNotification(body: "\(title) 訂單已建立，準備中")
@@ -454,12 +483,12 @@ final class CustomerOrderStore: ObservableObject {
         }
     }
 
-    private func update(orderID: UUID, to status: CustomerOrderStatus) {
+    private func update(orderID: String, to status: CustomerOrderStatus) {
         guard let idx = activeOrders.firstIndex(where: { $0.id == orderID }) else { return }
         activeOrders[idx].status = status
     }
 
-    private func complete(orderID: UUID) {
+    private func complete(orderID: String) {
         guard let idx = activeOrders.firstIndex(where: { $0.id == orderID }) else { return }
         var order = activeOrders.remove(at: idx)
         order.status = .delivered
@@ -483,18 +512,25 @@ enum CustomerOrderStatus: String, Codable {
     case preparing
     case delivering
     case delivered
+    case available
+    case assigned
+    case enRouteToPickup = "en_route_to_pickup"
+    case pickedUp = "picked_up"
+    case cancelled
 
     var displayText: String {
         switch self {
-        case .preparing: return "準備中"
-        case .delivering: return "配送中"
+        case .preparing, .available: return "準備中"
+        case .assigned, .enRouteToPickup: return "準備配送"
+        case .pickedUp, .delivering: return "配送中"
         case .delivered: return "已送達"
+        case .cancelled: return "已取消"
         }
     }
 }
 
 struct CustomerOrder: Identifiable {
-    let id = UUID()
+    let id: String
     let title: String
     let location: String
     var status: CustomerOrderStatus
@@ -513,10 +549,11 @@ struct OrderStatusRow: View {
                 Spacer()
                 Text(order.status.displayText)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(order.status == .delivered ? Color.secondary : Color.accentColor)
+                    .foregroundStyle(order.status == .delivered || order.status == .cancelled ? Color.secondary : Color.accentColor)
             }
             HStack(spacing: 8) {
-                Label(order.status == .delivered ? "已完成" : "預計抵達", systemImage: order.status == .delivered ? "checkmark.seal" : "clock")
+                Label(order.status == .delivered ? "已完成" : (order.status == .cancelled ? "已取消" : "預計抵達"),
+                      systemImage: order.status == .delivered ? "checkmark.seal" : (order.status == .cancelled ? "xmark.seal" : "clock"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let eta = order.etaMinutes, order.status != .delivered {
@@ -539,4 +576,17 @@ struct OrderStatusRow: View {
         df.timeStyle = .short
         return df
     }()
+}
+
+private extension OrderAPI.OrderSummary {
+    func toCustomerOrder(isHistory: Bool) -> CustomerOrder {
+        let date: Date
+        if let ts = Double(placedAt) {
+            date = Date(timeIntervalSince1970: ts)
+        } else {
+            date = Date()
+        }
+        let statusEnum = CustomerOrderStatus(rawValue: status) ?? .preparing
+        return CustomerOrder(id: id, title: restaurantName, location: "", status: statusEnum, etaMinutes: etaMinutes, placedAt: date)
+    }
 }
