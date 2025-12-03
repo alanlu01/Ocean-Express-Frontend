@@ -79,13 +79,68 @@
     `{ "data": [ { "id": "ord-001", "code": "A1-892", "fee": 85, "distanceKm": 1.2, "etaMinutes": 12, "status": "available", "merchant": { "name": "...", "lat": 25.0, "lng": 121.5 }, "customer": { "name": "...", "phone": "...", "lat": 25.01, "lng": 121.53 }, "dropoff": { "name": "資工系館" } } ] }`
   - 欄位說明：`dropoff.name` 直接來自買家下單的 `deliveryLocation.name`；目前前端不送 lat/lng。
 
+- `GET /delivery/:id` (auth: deliverer)
+  - 200: `{ "data": { ...DeliveryTask 同上... } }`
+  - 僅允許讀取：
+    - 任務為 `available`（尚未綁定外送員），或
+    - 任務的 `delivererId` 等於當前登入外送員 id。
+  - 若找不到或無權限則回傳 404/403（錯誤格式同下方通用錯誤）。
+
 - `POST /delivery/:id/accept` (auth: deliverer)
-  - 200: `{ "data": { ...DeliveryTask 同上..., "status": "assigned" } }`
+  - 用途：外送員接單並綁定該任務的 `delivererId`，同時將狀態從 `available` 改為 `assigned`。
+  - 200: `{ "data": { ...DeliveryTask 同上..., "status": "assigned", "delivererId": "<currentUserId>" } }`
+  - 400: 若訂單已被其他外送員接走或不在 `available` 狀態（可使用 `order.conflict` 之類錯誤碼）。
 
 - `GET /delivery/active` (auth: deliverer)
-  - 200: 回傳該外送員的任務列表（包含已完成、已取消，前端會自行區分 active/history）。
+  - 200: 回傳該外送員目前進行中的任務列表（例如 `assigned/en_route_to_pickup/picked_up/delivering`），不含已完成/已取消。
+
+- `GET /delivery/history` (auth: deliverer)
+  - 查詢該外送員的歷史配送紀錄（通常為 `delivered` 或 `cancelled` 的任務）。
+  - Query 參數：
+    - `from` (optional, date): 起始日期（含），格式 `YYYY-MM-DD`。
+    - `to` (optional, date): 結束日期（含），格式 `YYYY-MM-DD`。
+  - 200: `{ "data": [ { ...DeliveryTask 同上..., "status": "delivered" }, ... ] }`
+
+- `GET /delivery/earnings` (auth: deliverer)
+  - 查詢指定日期區間內外送員的收益統計，對應 OpenAPI 中的 `EarningsSummary`。
+  - Query 參數：
+    - `from` (required, date): 起始日期（含）。
+    - `to` (required, date): 結束日期（含）。
+  - 200:
+    ```json
+    {
+      "data": {
+        "from": "2025-11-01",
+        "to": "2025-11-30",
+        "currency": "TWD",
+        "totalEarnings": 12345,
+        "totalTasks": 42,
+        "byDay": [
+          { "date": "2025-11-01", "totalEarnings": 300, "taskCount": 2 },
+          { "date": "2025-11-02", "totalEarnings": 0, "taskCount": 0 }
+        ]
+      }
+    }
+    ```
+
+- `GET /delivery/notifications` (auth: deliverer)
+  - 用途：輪詢或長輪詢取得新任務/狀態更新等事件，用來在未整合推播時讓 App 保持同步。
+  - Query 參數：
+    - `sinceId` (optional): 客戶端最後一次收到的通知 id，伺服器會回傳之後的通知。
+    - `since` (optional, date-time): 依時間戳抓取之後建立的通知（ISO8601 UTC）。
+  - 200:
+    ```json
+    {
+      "data": [
+        { "id": "n1", "type": "new_task_available", "taskId": "ord-001", "status": "available", "createdAt": "2025-11-23T02:00:00Z" },
+        { "id": "n2", "type": "task_status_updated", "taskId": "ord-001", "status": "delivering", "createdAt": "2025-11-23T02:10:00Z" }
+      ]
+    }
+    ```
 
 - `PATCH /delivery/:id/status` (auth: deliverer)
+  - 用途：外送員更新自己任務的配送狀態，例如 `assigned → en_route_to_pickup → picked_up → delivering → delivered/cancelled`。
+  - 僅允許該任務的 `delivererId == currentUser.id` 的外送員呼叫；否則應回傳 403/400。
   - body: `{ "status": "en_route_to_pickup|picked_up|delivering|delivered|cancelled" }`
   - 200: `{ "data": { ...DeliveryTask 同上..., "status": "<status>" } }`
 
@@ -103,9 +158,10 @@
 - Restaurant: `{ id, name, imageUrl?, address?, phone? }`
 - MenuItem: `{ id, name, description, price, sizes[], spicinessOptions[] }`
 - Order: `{ id, restaurantId, userId, items[], status, etaMinutes?, placedAt, requestedTime?, deliveryLocation{name}, notes? }`
-- DeliveryTask（可共用 order id）：`{ id, riderId, status, merchant{}, customer{}, history[] }`
+- DeliveryTask（可共用 order id）：`{ id, delivererId?, status, fee, distanceKm, etaMinutes?, merchant{}, customer{}, dropoff{}, history[] }`
 
 ## 修改紀錄
 - 調整成功/錯誤回應格式說明為統一 `{ data }` / `{ message, code }`，明確標示時間需 ISO8601（可含毫秒），並強調下單的 `menuItemId` 為必填；配合前端解碼改寫。
 - 下單/回傳的 `deliveryLocation` 移除 `lat/lng`（前端只送名稱），請後端同步調整序列化/驗證；配送端 `dropoff` 若無座標也可只回傳名稱。
 - 下單 items 僅接受 `menuItemId`（不再傳 name）；後端請依 id 取菜單資料，避免因名稱變動/重複導致錯位。
+- 新增外送員綁定欄位 `delivererId`，並擴充外送員相關 API：包含任務詳情 `GET /delivery/:id`、歷史紀錄 `GET /delivery/history`、收益統計 `GET /delivery/earnings` 與通知輪詢 `GET /delivery/notifications` 等，對應 OpenAPI 中新增的 `DeliveryNotification` 和 `EarningsSummary` schema。
