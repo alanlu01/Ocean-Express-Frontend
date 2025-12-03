@@ -57,8 +57,6 @@ components:
       type: object
       properties:
         name: { type: string }
-        lat: { type: number, format: double, nullable: true }
-        lng: { type: number, format: double, nullable: true }
       required: [name]
     Order:
       type: object
@@ -71,8 +69,8 @@ components:
           type: string
           enum: [available, assigned, en_route_to_pickup, picked_up, delivering, delivered, cancelled]
         etaMinutes: { type: integer, nullable: true }
-        placedAt: { type: string, format: date-time }
-        requestedTime: { type: string, format: date-time, nullable: true }
+        placedAt: { type: string, format: date-time, example: "2025-11-23T02:00:00Z" }
+        requestedTime: { type: string, format: date-time, nullable: true, example: "2025-11-23T10:30:00Z" }
         items:
           type: array
           items:
@@ -112,6 +110,7 @@ components:
       properties:
         message: { type: string }
         code: { type: string }
+      required: [message]
 paths:
   /auth/login:
     post:
@@ -268,6 +267,16 @@ paths:
                         type: string
                         enum: [available, assigned, en_route_to_pickup, picked_up, delivering, delivered, cancelled]
                       etaMinutes: { type: integer, nullable: true }
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
     get:
       summary: List customer orders
       security:
@@ -289,6 +298,11 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/Order' }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /orders/{id}:
     get:

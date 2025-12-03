@@ -7,11 +7,6 @@
 
 import SwiftUI
 
-// MARK: - DTOs for Auth API (top-level to avoid @MainActor isolation in Swift 6)
-struct LoginReq: Codable { let email: String; let password: String }
-struct APIUser: Codable { let id: Int; let email: String }
-struct LoginResp: Codable { let token: String; let user: APIUser }
-
 // 使用者角色
 enum AuthRole: String, CaseIterable, Identifiable {
     case customer

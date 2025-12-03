@@ -73,7 +73,11 @@ struct MenuItemDetailView: View {
     }
 
     private func attemptAdd() {
-        if let existing = cart.currentRestaurant, existing != restaurantName {
+        if let existingId = cart.currentRestaurantId, let newId = restaurantId, existingId != newId {
+            showClearConfirm = true
+            return
+        }
+        if cart.currentRestaurantId == nil, let existingName = cart.currentRestaurantName, existingName != restaurantName {
             showClearConfirm = true
             return
         }

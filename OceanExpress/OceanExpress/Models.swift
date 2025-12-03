@@ -16,18 +16,22 @@ enum AppModels {
 
     struct MenuItem: Identifiable, Hashable, Codable {
         let id: UUID
+        let apiId: String?
         let name: String
         let description: String
         let price: Double
         let sizes: [String]
         let spicinessOptions: [String]
 
-        init(name: String,
+        init(id: UUID = UUID(),
+             apiId: String? = nil,
+             name: String,
              description: String,
              price: Double,
              sizes: [String] = ["Regular"],
              spicinessOptions: [String] = ["Mild", "Medium", "Hot"]) {
-            self.id = UUID()
+            self.id = id
+            self.apiId = apiId
             self.name = name
             self.description = description
             self.price = price
@@ -71,7 +75,8 @@ enum AppModels {
 
     final class Cart: ObservableObject {
         @Published var items: [CartItem] = []
-        @Published var currentRestaurant: String? = nil
+        @Published var currentRestaurantId: String? = nil
+        @Published var currentRestaurantName: String? = nil
 
         var itemCount: Int { items.reduce(0) { $0 + $1.quantity } }
         var subtotal: Double { items.reduce(0) { $0 + $1.lineTotal } }
@@ -82,13 +87,17 @@ enum AppModels {
             } else {
                 items.append(CartItem(item: item, restaurantId: restaurantId, restaurantName: restaurantName, size: size, spiciness: spiciness, addDrink: addDrink, quantity: quantity))
             }
-            currentRestaurant = restaurantName
+            if let restaurantId {
+                currentRestaurantId = restaurantId
+            }
+            currentRestaurantName = restaurantName
         }
 
         func remove(id: UUID) { items.removeAll { $0.id == id } }
         func clear() {
             items.removeAll()
-            currentRestaurant = nil
+            currentRestaurantId = nil
+            currentRestaurantName = nil
         }
     }
 }

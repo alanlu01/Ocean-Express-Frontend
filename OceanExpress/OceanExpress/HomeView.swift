@@ -325,12 +325,21 @@ struct DeliverySetupView: View {
             }
 
             do {
-                guard let restaurantId = cart.items.first?.restaurantId ?? cart.currentRestaurant else {
+                guard let restaurantId = cart.items.first?.restaurantId ?? cart.currentRestaurantId else {
                     throw APIError(message: "缺少餐廳資訊")
                 }
                 let token = UserDefaults.standard.string(forKey: "auth_token")
-                let itemsPayload = cart.items.map {
-                    OrderAPI.CreateOrderItem(name: $0.item.name, size: $0.size, spiciness: $0.spiciness, addDrink: $0.addDrink, quantity: $0.quantity)
+                let itemsPayload = try cart.items.map { cartItem -> OrderAPI.CreateOrderItem in
+                    guard let menuItemId = cartItem.item.apiId else {
+                        throw APIError(message: "缺少餐點 ID，請重新載入菜單")
+                    }
+                    return OrderAPI.CreateOrderItem(
+                        menuItemId: menuItemId,
+                        size: cartItem.size,
+                        spiciness: cartItem.spiciness,
+                        addDrink: cartItem.addDrink,
+                        quantity: cartItem.quantity
+                    )
                 }
                 let payload = OrderAPI.CreateOrderPayload(
                     restaurantId: restaurantId,
@@ -580,12 +589,7 @@ struct OrderStatusRow: View {
 
 private extension OrderAPI.OrderSummary {
     func toCustomerOrder(isHistory: Bool) -> CustomerOrder {
-        let date: Date
-        if let ts = Double(placedAt) {
-            date = Date(timeIntervalSince1970: ts)
-        } else {
-            date = Date()
-        }
+        let date = placedAt ?? Date()
         let statusEnum = CustomerOrderStatus(rawValue: status) ?? .preparing
         return CustomerOrder(id: id, title: restaurantName, location: "", status: statusEnum, etaMinutes: etaMinutes, placedAt: date)
     }

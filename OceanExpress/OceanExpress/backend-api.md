@@ -9,10 +9,12 @@
 
 ## 通用規範
 - 認證：JWT，受保護路由需 `Authorization: Bearer <token>`.
-- 成功回傳：`200/201` 包 `{ "data": ... }`；錯誤：`{ "message": "...", "code": "..." }`.
+- 成功回傳：`200/201` 一律包 `{ "data": ... }`；錯誤：`{ "message": "...", "code": "..." }`（前端已強制依此解碼）。
+- 時間格式：ISO8601 UTC（可含毫秒），包含 `placedAt/requestedTime/createdAt` 等欄位。
 - 狀態枚舉（前後端需對齊）：  
   - 訂單/配送：`available, assigned, en_route_to_pickup, picked_up, delivering, delivered, cancelled`
   - 角色：`customer, deliverer, restaurant`
+  - 下單地點：前端只送 `deliveryLocation.name`，不送 lat/lng；回傳也請移除 `deliveryLocation.lat/lng`。
 
 ## Auth
 - `POST /auth/login`
@@ -60,6 +62,7 @@
   ```
   - 備註：`deliveryLocation.name` 為固定地點名稱，會原樣出現在外送員 API 的 `dropoff.name`。
   - 201: `{ "data": { "id": "ord-001", "status": "available", "etaMinutes": 20 } }`
+  - 備註：`menuItemId` 為必填，前端已改為以此欄位下單。
 
 - `GET /orders?status=active|history` (auth: customer)
   - 200: `{ "data": [ { "id": "ord-001", "restaurantName": "Marina Burger", "status": "delivering", "etaMinutes": 8, "placedAt": "2025-11-23T02:00:00Z" } ] }`
@@ -72,9 +75,9 @@
 
 ## 外送員（Deliverer）
 - `GET /delivery/available` (auth: deliverer)
-  - 回傳可接單列表，包含商家與送達位置座標：  
-    `{ "data": [ { "id": "ord-001", "code": "A1-892", "fee": 85, "distanceKm": 1.2, "etaMinutes": 12, "status": "available", "merchant": { "name": "...", "lat": 25.0, "lng": 121.5 }, "customer": { "name": "...", "phone": "...", "lat": 25.01, "lng": 121.53 }, "dropoff": { "name": "...", "lat": 25.01, "lng": 121.53 } } ] }`
-  - 欄位說明：`dropoff.name` 直接來自買家下單時的 `deliveryLocation.name`；無 address，若無座標則前端僅顯示名稱。
+  - 回傳可接單列表（座標若有可傳，若無則僅回傳名稱）：  
+    `{ "data": [ { "id": "ord-001", "code": "A1-892", "fee": 85, "distanceKm": 1.2, "etaMinutes": 12, "status": "available", "merchant": { "name": "...", "lat": 25.0, "lng": 121.5 }, "customer": { "name": "...", "phone": "...", "lat": 25.01, "lng": 121.53 }, "dropoff": { "name": "資工系館" } } ] }`
+  - 欄位說明：`dropoff.name` 直接來自買家下單的 `deliveryLocation.name`；目前前端不送 lat/lng。
 
 - `POST /delivery/:id/accept` (auth: deliverer)
   - 200: `{ "data": { ...DeliveryTask 同上..., "status": "assigned" } }`
@@ -99,6 +102,10 @@
 - User: `{ id, email, role }`
 - Restaurant: `{ id, name, imageUrl?, address?, phone? }`
 - MenuItem: `{ id, name, description, price, sizes[], spicinessOptions[] }`
-- Order: `{ id, restaurantId, userId, items[], status, etaMinutes?, placedAt, requestedTime?, deliveryLocation{name,lat?,lng?}, notes? }`
+- Order: `{ id, restaurantId, userId, items[], status, etaMinutes?, placedAt, requestedTime?, deliveryLocation{name}, notes? }`
 - DeliveryTask（可共用 order id）：`{ id, riderId, status, merchant{}, customer{}, history[] }`
 
+## 修改紀錄
+- 調整成功/錯誤回應格式說明為統一 `{ data }` / `{ message, code }`，明確標示時間需 ISO8601（可含毫秒），並強調下單的 `menuItemId` 為必填；配合前端解碼改寫。
+- 下單/回傳的 `deliveryLocation` 移除 `lat/lng`（前端只送名稱），請後端同步調整序列化/驗證；配送端 `dropoff` 若無座標也可只回傳名稱。
+- 下單 items 僅接受 `menuItemId`（不再傳 name）；後端請依 id 取菜單資料，避免因名稱變動/重複導致錯位。

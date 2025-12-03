@@ -11,10 +11,51 @@ enum APIConfig {
 
 struct APIError: Error, LocalizedError {
     let message: String
+    let code: String?
+    init(message: String, code: String? = nil) {
+        self.message = message
+        self.code = code
+    }
     var errorDescription: String? { message }
 }
 
+private struct APIErrorResponse: Decodable {
+    let message: String?
+    let code: String?
+}
+
+private enum DateDecoder {
+    static let isoFormatter: ISO8601DateFormatter = {
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fmt
+    }()
+
+    static func makeJSONDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            if let timeInterval = try? container.decode(Double.self) {
+                return Date(timeIntervalSince1970: timeInterval)
+            }
+            let string = try container.decode(String.self)
+            if let date = isoFormatter.date(from: string) {
+                return date
+            }
+            if let date = ISO8601DateFormatter().date(from: string) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid date format: \(string)")
+        }
+        return decoder
+    }
+}
+
 enum APIClient {
+    static func decoder() -> JSONDecoder {
+        DateDecoder.makeJSONDecoder()
+    }
+
     static func request(_ path: String, method: String = "GET", token: String? = nil, body: Encodable? = nil) async throws -> Data {
         let url = APIConfig.baseURL.appendingPathComponent(path)
         return try await request(url: url, method: method, token: token, body: body)
@@ -36,8 +77,11 @@ enum APIClient {
             throw APIError(message: "No response")
         }
         if (200..<300).contains(http.statusCode) { return data }
+        if let decoded = try? decoder().decode(APIErrorResponse.self, from: data) {
+            throw APIError(message: decoded.message ?? "HTTP \(http.statusCode)", code: decoded.code)
+        }
         let msg = String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)"
-        throw APIError(message: msg)
+        throw APIError(message: msg, code: nil)
     }
 }
 
@@ -72,7 +116,7 @@ enum AuthAPI {
 
     static func login(email: String, password: String) async throws -> LoginResponse {
         let data = try await APIClient.request("auth/login", method: "POST", body: LoginRequest(email: email, password: password))
-        let wrapper = try JSONDecoder().decode(LoginWrapper.self, from: data)
+        let wrapper = try APIClient.decoder().decode(LoginWrapper.self, from: data)
         return wrapper.data
     }
 
@@ -127,16 +171,16 @@ enum RestaurantAPI {
 
     static func fetchRestaurants() async throws -> [RestaurantSummary] {
         let data = try await APIClient.request("restaurants")
-        let wrapper = try JSONDecoder().decode(RestaurantListResponse.self, from: data)
+        let wrapper = try APIClient.decoder().decode(RestaurantListResponse.self, from: data)
         return wrapper.data
     }
 
     static func fetchMenu(restaurantId: String) async throws -> [MenuItemDTO] {
         let data = try await APIClient.request("restaurants/\(restaurantId)/menu")
-        if let wrapper = try? JSONDecoder().decode(MenuListResponse.self, from: data) {
+        if let wrapper = try? APIClient.decoder().decode(MenuListResponse.self, from: data) {
             return wrapper.items
         }
-        return try JSONDecoder().decode([MenuItemDTO].self, from: data)
+        return try APIClient.decoder().decode([MenuItemDTO].self, from: data)
     }
 
     private struct RestaurantListResponse: Decodable { let data: [RestaurantSummary] }
@@ -147,7 +191,7 @@ enum RestaurantAPI {
 
 enum OrderAPI {
     struct CreateOrderItem: Encodable {
-        let name: String
+        let menuItemId: String
         let size: String
         let spiciness: String
         let addDrink: Bool
@@ -173,7 +217,7 @@ enum OrderAPI {
         let restaurantName: String
         let status: String
         let etaMinutes: Int?
-        let placedAt: String
+        let placedAt: Date?
     }
 
     struct OrderDetail: Decodable {
@@ -181,11 +225,11 @@ enum OrderAPI {
         let restaurantName: String?
         let status: String
         let etaMinutes: Int?
-        let placedAt: String
+        let placedAt: Date?
         let items: [OrderItem]?
         let deliveryLocation: DeliveryLocationPayload?
         let notes: String?
-        let requestedTime: String?
+        let requestedTime: Date?
     }
 
     struct OrderItem: Decodable {
@@ -205,7 +249,7 @@ enum OrderAPI {
         guard let url = components?.url else { throw APIError(message: "Invalid orders URL") }
 
         let data = try await APIClient.request(url: url, token: token)
-        let wrapper = try JSONDecoder().decode(OrderListWrapper.self, from: data)
+        let wrapper = try APIClient.decoder().decode(OrderListWrapper.self, from: data)
         return wrapper.data
     }
 
@@ -215,7 +259,7 @@ enum OrderAPI {
         guard let url = components?.url else { throw APIError(message: "Invalid order detail URL") }
 
         let data = try await APIClient.request(url: url, token: token)
-        let wrapper = try JSONDecoder().decode(OrderDetailWrapper.self, from: data)
+        let wrapper = try APIClient.decoder().decode(OrderDetailWrapper.self, from: data)
         return wrapper.data
     }
 
@@ -256,9 +300,7 @@ enum DelivererAPI {
     }
 
     private static let decoder: JSONDecoder = {
-        let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
-        return d
+        APIClient.decoder()
     }()
 
     static func fetchAvailable(token: String?) async throws -> [Task] {
@@ -301,6 +343,7 @@ enum DelivererAPI {
 extension RestaurantAPI.MenuItemDTO {
     func toMenuItem() -> MenuItem {
         MenuItem(
+            apiId: id,
             name: name,
             description: description,
             price: price,
