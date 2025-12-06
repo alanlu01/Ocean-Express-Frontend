@@ -99,7 +99,7 @@ private struct AnyEncodable: Encodable {
 
 enum AuthAPI {
     struct LoginRequest: Encodable { let email: String; let password: String }
-    struct RegisterRequest: Encodable { let name: String; let email: String; let password: String }
+    struct RegisterRequest: Encodable { let name: String; let email: String; let password: String; let phone: String }
     struct LoginResponse: Decodable {
         let token: String
         let user: APIUser
@@ -120,8 +120,8 @@ enum AuthAPI {
         return wrapper.data
     }
 
-    static func register(name: String, email: String, password: String) async throws {
-        _ = try await APIClient.request("auth/register", method: "POST", body: RegisterRequest(name: name, email: email, password: password))
+    static func register(name: String, email: String, password: String, phone: String) async throws {
+        _ = try await APIClient.request("auth/register", method: "POST", body: RegisterRequest(name: name, email: email, password: password, phone: phone))
     }
 }
 
@@ -132,18 +132,60 @@ enum RestaurantAPI {
         let id: String
         let name: String
         let imageUrl: String?
+        let rating: Double?
+    }
+
+    struct Review: Decodable, Identifiable {
+        let id: String
+        let userName: String?
+        let rating: Int
+        let comment: String?
+        let createdAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id, userName, rating, comment, createdAt, _id, user
+        }
+
+        enum OIDKeys: String, CodingKey { case oid = "$oid" }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            if let id = try? c.decode(String.self, forKey: .id) {
+                self.id = id
+            } else if let oidContainer = try? c.nestedContainer(keyedBy: OIDKeys.self, forKey: ._id) {
+                self.id = try oidContainer.decode(String.self, forKey: .oid)
+            } else if let rawId = try? c.decode(String.self, forKey: ._id) {
+                self.id = rawId
+            } else {
+                self.id = UUID().uuidString
+            }
+            userName = (try? c.decode(String.self, forKey: .userName)) ?? (try? c.decode(String.self, forKey: .user))
+            rating = (try? c.decode(Int.self, forKey: .rating)) ?? 0
+            comment = try? c.decode(String.self, forKey: .comment)
+            createdAt = try? c.decode(Date.self, forKey: .createdAt)
+        }
+
+        init(id: String = UUID().uuidString, userName: String? = nil, rating: Int, comment: String? = nil, createdAt: Date? = nil) {
+            self.id = id
+            self.userName = userName
+            self.rating = rating
+            self.comment = comment
+            self.createdAt = createdAt
+        }
     }
 
     struct MenuItemDTO: Decodable {
         let id: String
         let name: String
         let description: String
-        let price: Double
+        let price: Int
         let sizes: [String]?
         let spicinessOptions: [String]?
+        let allergens: [String]?
+        let tags: [String]?
 
         enum CodingKeys: String, CodingKey {
-            case id, name, description, price, sizes, spicinessOptions, _id
+            case id, name, description, price, sizes, spicinessOptions, _id, allergens, tags
         }
 
         enum OIDKeys: String, CodingKey {
@@ -163,10 +205,18 @@ enum RestaurantAPI {
             }
             name = try container.decode(String.self, forKey: .name)
             description = try container.decode(String.self, forKey: .description)
-            price = try container.decode(Double.self, forKey: .price)
+            if let intPrice = try? container.decode(Int.self, forKey: .price) {
+                price = intPrice
+            } else {
+                let doublePrice = try container.decode(Double.self, forKey: .price)
+                price = Int(doublePrice.rounded())
+            }
             sizes = try? container.decode([String].self, forKey: .sizes)
             spicinessOptions = try? container.decode([String].self, forKey: .spicinessOptions)
+            allergens = try? container.decode([String].self, forKey: .allergens)
+            tags = try? container.decode([String].self, forKey: .tags)
         }
+
     }
 
     static func fetchRestaurants() async throws -> [RestaurantSummary] {
@@ -183,8 +233,17 @@ enum RestaurantAPI {
         return try APIClient.decoder().decode([MenuItemDTO].self, from: data)
     }
 
+    static func fetchReviews(restaurantId: String) async throws -> [Review] {
+        let data = try await APIClient.request("restaurants/\(restaurantId)/reviews")
+        if let wrapper = try? APIClient.decoder().decode(ReviewListResponse.self, from: data) {
+            return wrapper.data
+        }
+        return try APIClient.decoder().decode([Review].self, from: data)
+    }
+
     private struct RestaurantListResponse: Decodable { let data: [RestaurantSummary] }
     private struct MenuListResponse: Decodable { let items: [MenuItemDTO] }
+    private struct ReviewListResponse: Decodable { let data: [Review] }
 }
 
 // MARK: - Orders
@@ -204,9 +263,15 @@ enum OrderAPI {
         let deliveryLocation: DeliveryLocationPayload
         let notes: String?
         let requestedTime: String?
+        let deliveryFee: Int?
+        let totalAmount: Int?
     }
 
-    struct DeliveryLocationPayload: Codable { let name: String }
+    struct DeliveryLocationPayload: Codable {
+        let name: String
+        let lat: Double?
+        let lng: Double?
+    }
 
     static func createOrder(payload: CreateOrderPayload, token: String?) async throws {
         _ = try await APIClient.request("orders", method: "POST", token: token, body: payload)
@@ -218,6 +283,7 @@ enum OrderAPI {
         let status: String
         let etaMinutes: Int?
         let placedAt: Date?
+        let totalAmount: Int?
     }
 
     struct OrderDetail: Decodable {
@@ -230,6 +296,12 @@ enum OrderAPI {
         let deliveryLocation: DeliveryLocationPayload?
         let notes: String?
         let requestedTime: Date?
+        let deliveryFee: Int?
+        let totalAmount: Int?
+        let riderName: String?
+        let riderPhone: String?
+        let statusHistory: [StatusHistory]?
+        var rating: OrderRating?
     }
 
     struct OrderItem: Decodable {
@@ -238,6 +310,17 @@ enum OrderAPI {
         let spiciness: String?
         let addDrink: Bool?
         let quantity: Int?
+        let price: Int?
+    }
+
+    struct StatusHistory: Decodable {
+        let status: String
+        let timestamp: Date?
+    }
+
+    struct OrderRating: Codable {
+        let score: Int
+        let comment: String?
     }
 
     static func fetchOrders(status: String? = nil, token: String?) async throws -> [OrderSummary] {
@@ -263,6 +346,11 @@ enum OrderAPI {
         return wrapper.data
     }
 
+    static func submitRating(orderId: String, score: Int, comment: String?, token: String?) async throws {
+        struct RatingBody: Encodable { let score: Int; let comment: String? }
+        _ = try await APIClient.request("orders/\(orderId)/rating", method: "POST", token: token, body: RatingBody(score: score, comment: comment))
+    }
+
     private struct OrderListWrapper: Decodable { let data: [OrderSummary] }
     private struct OrderDetailWrapper: Decodable { let data: OrderDetail }
 }
@@ -280,7 +368,7 @@ enum DelivererAPI {
     struct Task: Decodable {
         let id: String?
         let code: String?
-        let fee: Double?
+        let fee: Int?
         let distanceKm: Double?
         let etaMinutes: Int?
         let status: String?
@@ -340,6 +428,35 @@ enum DelivererAPI {
     }
 }
 
+// MARK: - Delivery Locations
+
+enum DeliveryLocationAPI {
+    struct LocationDTO: Decodable {
+        let name: String
+        let lat: Double?
+        let lng: Double?
+        let category: String?
+    }
+
+    struct CategoryDTO: Decodable {
+        let category: String
+        let items: [LocationDTO]
+    }
+
+    private struct CategoryList: Decodable { let data: [CategoryDTO] }
+    private struct FlatList: Decodable { let data: [LocationDTO] }
+
+    static func fetchCategories() async throws -> [CategoryDTO] {
+        let data = try await APIClient.request("delivery/locations")
+        if let categories = try? APIClient.decoder().decode(CategoryList.self, from: data) {
+            return categories.data
+        }
+        let flat = try APIClient.decoder().decode(FlatList.self, from: data)
+        let cat = CategoryDTO(category: "預設地點", items: flat.data)
+        return [cat]
+    }
+}
+
 extension RestaurantAPI.MenuItemDTO {
     func toMenuItem() -> MenuItem {
         MenuItem(
@@ -347,8 +464,10 @@ extension RestaurantAPI.MenuItemDTO {
             name: name,
             description: description,
             price: price,
-            sizes: sizes ?? ["Regular"],
-            spicinessOptions: spicinessOptions ?? ["Mild", "Medium", "Hot"]
+            sizes: sizes ?? ["中份"],
+            spicinessOptions: spicinessOptions ?? ["不辣", "小辣", "中辣"],
+            allergens: allergens ?? [],
+            tags: tags ?? []
         )
     }
 }

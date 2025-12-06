@@ -73,7 +73,7 @@ struct Customer: Hashable {
 struct Order: Identifiable, Hashable {
     var id: String = UUID().uuidString
     var code: String // 顯示編號用
-    var fee: Double // 外送費
+    var fee: Int // 外送費（整數）
     var distanceKm: Double // 粗估距離（列表展示）
     var etaMinutes: Int // 粗估時間（列表展示）
     var createdAt: Date = Date()
@@ -98,7 +98,7 @@ struct Order: Identifiable, Hashable {
 struct DailyEarning: Identifiable, Hashable {
     var id = UUID()
     var date: Date
-    var amount: Double
+    var amount: Int
 }
 
 // MARK: - Location Manager
@@ -441,7 +441,7 @@ final class AppState: ObservableObject {
     }
 
     private static func computeEarnings(from orders: [Order]) -> [DailyEarning] {
-        var accumulator: [Date: Double] = [:]
+        var accumulator: [Date: Int] = [:]
         let cal = Calendar.current
         orders.forEach { order in
             let day = cal.startOfDay(for: order.createdAt)
@@ -937,6 +937,7 @@ struct HistoryView: View {
         NavigationStack {
             VStack(alignment: .leading) {
                 Text("收益統計").font(.headline).padding(.horizontal)
+                let maxAmount = app.dailyEarnings.map { Double($0.amount) }.max() ?? 0
                 Chart(app.dailyEarnings) { item in
                     LineMark(
                         x: .value("日期", item.date),
@@ -947,7 +948,7 @@ struct HistoryView: View {
                         y: .value("金額", item.amount)
                     )
                 }
-                .chartYScale(domain: 0...max(1400, (app.dailyEarnings.map{ $0.amount }.max() ?? 0) * 1.2))
+                .chartYScale(domain: 0...max(1400, maxAmount * 1.2))
                 .frame(height: 180)
                 .padding(.horizontal)
 
@@ -984,7 +985,7 @@ struct DelivererSettingsView: View {
                     Button {
                         onSwitchRole()
                     } label: {
-                        Label("切換身份", systemImage: "arrow.triangle.2.circlepath")
+                        Label("切換成買家", systemImage: "arrow.triangle.2.circlepath")
                     }
 
                     Button(role: .destructive) {

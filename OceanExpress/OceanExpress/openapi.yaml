@@ -19,6 +19,7 @@ components:
         id: { type: string }
         email: { type: string, format: email }
         role: { type: string, enum: [customer, deliverer, restaurant] }
+        phone: { type: string, nullable: true, example: "09xxxxxxxx" }
       required: [id, email, role]
     Restaurant:
       type: object
@@ -28,6 +29,7 @@ components:
         imageUrl: { type: string, nullable: true }
         address: { type: string, nullable: true }
         phone: { type: string, nullable: true }
+        rating: { type: number, format: double, nullable: true, example: 4.5 }
       required: [id, name]
     MenuItem:
       type: object
@@ -35,15 +37,22 @@ components:
         id: { type: string }
         name: { type: string }
         description: { type: string }
-        price: { type: number }
+        price: { type: integer, format: int32 }
         sizes:
           type: array
           items: { type: string }
         spicinessOptions:
           type: array
           items: { type: string }
+        allergens:
+          type: array
+          items: { type: string }
+        tags:
+          type: array
+          items: { type: string }
         imageUrl: { type: string, nullable: true }
       required: [id, name, description, price]
+
     OrderItemPayload:
       type: object
       properties:
@@ -57,7 +66,19 @@ components:
       type: object
       properties:
         name: { type: string }
+        lat: { type: number, format: double, nullable: true }
+        lng: { type: number, format: double, nullable: true }
+        category: { type: string, nullable: true }
       required: [name]
+
+    DeliveryLocationCategory:
+      type: object
+      properties:
+        category: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeliveryLocation' }
+      required: [category, items]
     Order:
       type: object
       properties:
@@ -78,7 +99,29 @@ components:
               - $ref: '#/components/schemas/OrderItemPayload'
         deliveryLocation: { $ref: '#/components/schemas/DeliveryLocation' }
         notes: { type: string, nullable: true }
+        deliveryFee: { type: integer, format: int32, nullable: true }
+        totalAmount: { type: integer, format: int32, nullable: true }
+        riderName: { type: string, nullable: true }
+        riderPhone: { type: string, nullable: true }
+        statusHistory:
+          type: array
+          items: { $ref: '#/components/schemas/StatusHistory' }
+        rating: { $ref: '#/components/schemas/OrderRating' }
       required: [id, restaurantId, status, placedAt, items, deliveryLocation]
+
+    StatusHistory:
+      type: object
+      properties:
+        status: { type: string }
+        timestamp: { type: string, format: date-time, nullable: true }
+      required: [status]
+
+    OrderRating:
+      type: object
+      properties:
+        score: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string, nullable: true }
+      required: [score]
     DeliveryStop:
       type: object
       properties:
@@ -92,7 +135,7 @@ components:
       properties:
         id: { type: string }
         code: { type: string }
-        fee: { type: number }
+        fee: { type: integer, format: int32 }
         distanceKm: { type: number }
         etaMinutes: { type: integer, nullable: true }
         status:
@@ -157,7 +200,8 @@ paths:
                 name: { type: string }
                 email: { type: string, format: email }
                 password: { type: string }
-              required: [name, email, password]
+                phone: { type: string, pattern: "^09\\d{8}$", example: "0912345678" }
+              required: [name, email, password, phone]
       responses:
         "201":
           description: Created
@@ -172,6 +216,7 @@ paths:
                       id: { type: string }
                       email: { type: string, format: email }
                       role: { type: string, enum: [customer, deliverer, restaurant] }
+                      phone: { type: string }
         "400":
           description: Bad Request
           content:
@@ -231,6 +276,33 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/MenuItem' }
 
+  /restaurants/{id}/reviews:
+    get:
+      summary: Reviews of a restaurant
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        userName: { type: string, nullable: true }
+                        rating: { type: integer, minimum: 1, maximum: 5 }
+                        comment: { type: string, nullable: true }
+                        createdAt: { type: string, format: date-time, nullable: true }
+                      required: [id, rating]
   /orders:
     post:
       summary: Create order (customer)
@@ -250,6 +322,8 @@ paths:
                 deliveryLocation: { $ref: '#/components/schemas/DeliveryLocation' }
                 notes: { type: string, nullable: true }
                 requestedTime: { type: string, format: date-time, nullable: true }
+                deliveryFee: { type: integer, format: int32, nullable: true }
+                totalAmount: { type: integer, format: int32, nullable: true }
               required: [restaurantId, items, deliveryLocation]
       responses:
         "201":
@@ -323,6 +397,42 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/Order' }
+
+  /orders/{id}/rating:
+    post:
+      summary: Rate an order
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRating'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/OrderRating' }
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /orders/{id}/cancel:
     patch:
@@ -435,3 +545,18 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/DeliveryTask'
+
+  /delivery/locations:
+    get:
+      summary: Preset delivery locations
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DeliveryLocationCategory' }

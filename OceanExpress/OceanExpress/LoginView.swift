@@ -50,15 +50,13 @@ struct LoginView: View {
                         .transition(AnyTransition.slide)
                 } else {
                     VStack(spacing: 24) {
-                        // App Title
                         Text("Ocean Express")
                             .font(.largeTitle)
                             .fontWeight(.bold)
                             .foregroundStyle(.tint)
                             .padding(.top, 60)
 
-                        // Email Field
-                        TextField("Email", text: $email, prompt: Text("Email"))
+                        TextField("電子郵件", text: $email, prompt: Text("請輸入 Email"))
                             .textContentType(.emailAddress)
                             .keyboardType(.emailAddress)
                             .textInputAutocapitalization(.never)
@@ -68,8 +66,7 @@ struct LoginView: View {
                             .cornerRadius(10)
                             .padding(.horizontal, 32)
 
-                        // Password Field
-                        SecureField("Password", text: $password, prompt: Text("Password"))
+                        SecureField("密碼", text: $password, prompt: Text("請輸入密碼"))
                             .textContentType(.password)
                             .padding()
                             .background(Color(.systemGray6))
@@ -78,7 +75,6 @@ struct LoginView: View {
                             .submitLabel(.go)
                             .onSubmit { login() }
 
-                        // Role Selector
                         VStack(alignment: .leading, spacing: 12) {
                             Text("登入身分").font(.headline)
                             HStack(spacing: 12) {
@@ -107,7 +103,6 @@ struct LoginView: View {
                         }
                         .padding(.horizontal, 32)
 
-                        // Login Button
                         Button(action: login) {
                             if isLoading {
                                 ProgressView()
@@ -123,14 +118,13 @@ struct LoginView: View {
                         .disabled(isLoading)
                         .padding(.horizontal, 32)
 
-                        // Register Link
                         HStack {
-                            Text("Don't have an account?")
+                            Text("還沒有帳號？")
                                 .foregroundColor(.gray)
                             NavigationLink {
                                 RegisterView()
                             } label: {
-                                Text("Sign Up")
+                                Text("去註冊")
                                     .fontWeight(.semibold)
                             }
                         }
@@ -143,7 +137,7 @@ struct LoginView: View {
             .accentColor(.accentColor)
             .animation(.default, value: isLoggedIn)
             .alert(isPresented: $showAlert) {
-                Alert(title: Text("Login Error"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+                Alert(title: Text("登入訊息"), message: Text(alertMessage), dismissButton: .default(Text("確定")))
             }
         }
     }
@@ -153,14 +147,16 @@ struct LoginView: View {
         withAnimation { isLoggedIn = false }
     }
 
-    private func handleSwitchRole() {
-        performLogout()
-        role = .customer
+    private func switchRole(to newRole: AuthRole) {
+        withAnimation {
+            role = newRole
+            isLoggedIn = true
+        }
     }
 
     func login() {
         guard !email.isEmpty, !password.isEmpty else {
-            alertMessage = "Please enter both email and password."
+            alertMessage = "請輸入 Email 與密碼"
             showAlert = true
             return
         }
@@ -198,22 +194,15 @@ struct LoginView: View {
                 }
             }
         }
-
-        func showError(_ msg: String) {
-            DispatchQueue.main.async {
-                alertMessage = msg
-                showAlert = true
-            }
-        }
     }
 
     @ViewBuilder
     private func roleDestination(_ role: AuthRole) -> some View {
         switch role {
         case .customer:
-            HomeView(onLogout: performLogout, onSwitchRole: handleSwitchRole)
+            HomeView(onLogout: performLogout, onSwitchRole: { switchRole(to: .deliverer) })
         case .deliverer:
-            DelivererModule(onLogout: performLogout, onSwitchRole: handleSwitchRole)
+            DelivererModule(onLogout: performLogout, onSwitchRole: { switchRole(to: .customer) })
         case .restaurant:
             RestaurantComingSoonView()
         }
@@ -228,6 +217,7 @@ struct LoginView: View {
 struct RegisterView: View {
     @State private var name: String = ""
     @State private var email: String = ""
+    @State private var phone: String = ""
     @State private var password: String = ""
     @State private var confirmPassword: String = ""
 
@@ -243,10 +233,12 @@ struct RegisterView: View {
                 Section(header: Text("基本資料")) {
                     TextField("姓名", text: $name)
                         .textInputAutocapitalization(.words)
-                    TextField("Email", text: $email)
+                    TextField("電子郵件", text: $email)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                    TextField("電話（09xxxxxxxx）", text: $phone)
+                        .keyboardType(.numberPad)
                     SecureField("密碼", text: $password)
                     SecureField("再次輸入密碼", text: $confirmPassword)
                 }
@@ -271,12 +263,12 @@ struct RegisterView: View {
         }
         .navigationTitle("註冊")
         .alert(isPresented: $showAlert) {
-            Alert(title: Text("註冊結果"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+            Alert(title: Text("註冊結果"), message: Text(alertMessage), dismissButton: .default(Text("好的")))
         }
     }
 
     private func register() {
-        guard !name.isEmpty, !email.isEmpty, !password.isEmpty, !confirmPassword.isEmpty else {
+        guard !name.isEmpty, !email.isEmpty, !phone.isEmpty, !password.isEmpty, !confirmPassword.isEmpty else {
             alertMessage = "請填寫所有欄位"
             showAlert = true
             return
@@ -286,11 +278,16 @@ struct RegisterView: View {
             showAlert = true
             return
         }
+        guard phone.range(of: "^09\\d{8}$", options: .regularExpression) != nil else {
+            alertMessage = "電話格式需為 09 開頭的 10 碼數字"
+            showAlert = true
+            return
+        }
 
         isLoading = true
         Task {
             do {
-                try await AuthAPI.register(name: name, email: email, password: password)
+                try await AuthAPI.register(name: name, email: email, password: password, phone: phone)
                 DispatchQueue.main.async {
                     isLoading = false
                     alertMessage = "註冊成功，請以新帳號登入。"

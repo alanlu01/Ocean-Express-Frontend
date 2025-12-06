@@ -18,7 +18,6 @@ struct MenuItemDetailView: View {
 
     @State private var size: String
     @State private var spiciness: String
-    @State private var addDrink = false
     @State private var quantity = 1
     @State private var isAdding = false
     @State private var showClearConfirm = false
@@ -27,34 +26,50 @@ struct MenuItemDetailView: View {
         self.item = item
         self.restaurantId = restaurantId
         self.restaurantName = restaurantName
-        _size = State(initialValue: item.sizes.first ?? "Regular")
-        _spiciness = State(initialValue: item.spicinessOptions.first ?? "Mild")
+        _size = State(initialValue: item.sizes.first ?? "中份")
+        _spiciness = State(initialValue: item.spicinessOptions.first ?? "不辣")
     }
 
     var body: some View {
         Form {
-            Section(header: Text("Customize")) {
-                Picker("Size", selection: $size) {
+            Section(header: Text("客製化")) {
+                Picker("份量", selection: $size) {
                     ForEach(item.sizes, id: \.self) { Text($0) }
                 }
 
-                Picker("Spiciness", selection: $spiciness) {
+                Picker("辣度", selection: $spiciness) {
                     ForEach(item.spicinessOptions, id: \.self) { Text($0) }
                 }
 
-                Toggle("Add Drink (+$1.50)", isOn: $addDrink)
+                Stepper("數量：\(quantity)", value: $quantity, in: 1...10)
             }
 
-            Section {
-                Button {
-                    attemptAdd()
-                } label: {
-                    Label("Add to Cart", systemImage: "cart.badge.plus")
+            Section("餐點資訊") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(item.description).font(.subheadline)
+                    HStack {
+                        ForEach(item.tags, id: \.self) { tag in
+                            Label(tag, systemImage: "tag.fill")
+                                .labelStyle(.titleAndIcon)
+                                .font(.caption)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.accentColor.opacity(0.1))
+                                .clipShape(Capsule())
+                        }
+                    }
+                    if !item.allergens.isEmpty {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text("過敏原：\(item.allergens.joined(separator: "、"))")
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.accentColor)
-                .disabled(isAdding)
             }
+
         }
         .navigationTitle(item.name)
         .onChange(of: cart.itemCount) { _, _ in
@@ -69,6 +84,20 @@ struct MenuItemDetailView: View {
             }
         } message: {
             Text("購物車已有其他餐廳的餐點，清空後才能加入 \(restaurantName)。")
+        }
+        .safeAreaInset(edge: .bottom) {
+            Button {
+                attemptAdd()
+            } label: {
+                Label("加入購物車", systemImage: "cart.badge.plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.accentColor)
+            .disabled(isAdding)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
         }
     }
 
@@ -87,7 +116,7 @@ struct MenuItemDetailView: View {
     private func addToCart() {
         guard !isAdding else { return }
         isAdding = true
-        cart.add(item: item, restaurantId: restaurantId, restaurantName: restaurantName, size: size, spiciness: spiciness, addDrink: addDrink, quantity: quantity)
+        cart.add(item: item, restaurantId: restaurantId, restaurantName: restaurantName, size: size, spiciness: spiciness, drinkOption: DrinkOption.defaultOptions[0], quantity: quantity)
         // Dual dismiss for safety across iOS versions
         DispatchQueue.main.async {
             dismiss()
