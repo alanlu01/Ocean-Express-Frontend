@@ -11,6 +11,8 @@ import MapKit
 import CoreLocation
 import CoreLocationUI
 import Charts
+import UIKit
+import UserNotifications
 
 // MARK: - Domain Models
 
@@ -174,35 +176,48 @@ final class MockOrderService: OrderServiceProtocol {
 
         let now = Date()
 
-        let order1 = Order(
-            code: "A1-892",
-            fee: 85,
-            distanceKm: 1.2,
-            etaMinutes: 12,
-            createdAt: now.addingTimeInterval(-300),
-            merchant: merchant1,
-            customer: cust1,
-            dropoff: drop1,
-            notes: "多加辣，飲料去冰",
-            canPickup: true,
-            status: .available
-        )
+        var orders: [Order] = []
 
-        let order2 = Order(
-            code: "B7-443",
-            fee: 62,
-            distanceKm: 0.8,
-            etaMinutes: 10,
-            createdAt: now.addingTimeInterval(-120),
-            merchant: merchant2,
-            customer: cust2,
-            dropoff: drop2,
-            notes: "請先聯繫再上樓",
-            canPickup: false,
-            status: .available
-        )
+        // 產生約 20 筆假資料：大多數為已送達少數為可接單，時間往回推
+        for i in 0..<20 {
+            let isFirstMerchant = i % 2 == 0
+            let merchant = isFirstMerchant ? merchant1 : merchant2
+            let drop = isFirstMerchant ? drop1 : drop2
+            let customer = isFirstMerchant ? cust1 : cust2
 
-        return [order1, order2]
+            // 最近的幾筆維持為可接單，其餘視為已完成訂單
+            let status: OrderStatus = (i < 3) ? .available : .delivered
+
+            // 每筆間隔 45 分鐘，往過去推，讓歷史、收益有跨日資料
+            let createdAt = now.addingTimeInterval(TimeInterval(-45 * 60 * (i + 1)))
+
+            let codePrefix = isFirstMerchant ? "A" : "B"
+            let code = String(format: "%@%02d-%03d", codePrefix, i, 100 + i)
+
+            let fee: Double = 60 + Double((i % 5) * 10) // 60, 70, 80, 90, 100 循環
+            let distance: Double = 0.6 + Double(i % 4) * 0.4
+            let eta: Int = 8 + (i % 5) * 2
+
+            let notes = isFirstMerchant ? "多加辣，飲料去冰" : "請先聯繫再上樓"
+            let canPickup = (status == .available) ? (i % 2 == 0) : true
+
+            let order = Order(
+                code: code,
+                fee: fee,
+                distanceKm: distance,
+                etaMinutes: eta,
+                createdAt: createdAt,
+                merchant: merchant,
+                customer: customer,
+                dropoff: drop,
+                notes: notes,
+                canPickup: canPickup,
+                status: status
+            )
+            orders.append(order)
+        }
+
+        return orders
     }
 
     func streamAvailableOrders() -> AsyncStream<[Order]> {
@@ -429,9 +444,11 @@ final class AppState: ObservableObject {
     @Published var history: [Order] = []
     @Published var dailyEarnings: [DailyEarning] = []
     @Published var selectedOrder: Order? = nil
+    @Published var enableNewOrderNotifications: Bool = true
 
     private let service: OrderServiceProtocol
     private var streamTask: Task<Void, Never>? = nil
+    private var lastAvailableOrderIDs: Set<String> = []
 
     init(service: any OrderServiceProtocol) {
         self.service = service
@@ -447,7 +464,18 @@ final class AppState: ObservableObject {
         streamTask = Task { [weak self] in
             guard let self else { return }
             for await list in service.streamAvailableOrders() {
-                self.availableOrders = list.filter { $0.status == .available }
+                let available = list.filter { $0.status == .available }
+                let currentIDs = Set(available.map { $0.id })
+                let newlyAdded = available.filter { !lastAvailableOrderIDs.contains($0.id) }
+                lastAvailableOrderIDs = currentIDs
+                await MainActor.run {
+                    self.availableOrders = available
+                    newlyAdded.forEach { order in
+                        if self.enableNewOrderNotifications {
+                            NotificationManager.shared.notifyNewOrder(order)
+                        }
+                    }
+                }
             }
         }
     }
@@ -474,6 +502,7 @@ final class AppState: ObservableObject {
             }
             // 再由 refreshTasks() 根據最新 orders 決定 activeTasks / history / dailyEarnings
             await refreshTasks()
+            NotificationManager.shared.notifyStatusChanged(updated)
         } catch {
             print("Status update error: \(error)")
         }
@@ -505,13 +534,20 @@ final class AppState: ObservableObject {
     }
 
     private static func computeEarnings(from orders: [Order]) -> [DailyEarning] {
-        var accumulator: [Date: Double] = [:]
+        var accumulator: [Date: Int] = [:]
         let cal = Calendar.current
+
+        // 收益邏輯：每單固定 20 元，當日收益 = 20 * 當日完成單數
         orders.forEach { order in
             let day = cal.startOfDay(for: order.createdAt)
-            accumulator[day, default: 0] += order.fee
+            accumulator[day, default: 0] += 1
         }
-        return accumulator.map { DailyEarning(date: $0.key, amount: $0.value) }.sorted { $0.date < $1.date }
+
+        return accumulator
+            .map { (day, count) in
+                DailyEarning(date: day, amount: Double(count * 20))
+            }
+            .sorted { $0.date < $1.date }
     }
 }
 
@@ -557,7 +593,10 @@ struct RootView: View {
             DelivererSettingsView(onLogout: onLogout, onSwitchRole: onSwitchRole)
                 .tabItem { Label("設定", systemImage: "gearshape") }
         }
-        .onAppear { loc.request() }
+        .onAppear {
+            loc.request()
+            NotificationManager.shared.requestAuthorization()
+        }
         .task {
             await app.refreshTasks()
         }
@@ -739,6 +778,23 @@ struct OrderDetailView: View {
     }
 
     private func computeRoute() {
+        // 優先使用後端回傳的路線座標（Order.routePolyline）
+        if let polyline = liveOrder.routePolyline {
+            let coords = polyline.coordinates
+            guard !coords.isEmpty else { return }
+            routeCoords = coords
+            routeDistanceMeters = polyline.length
+            // 若後端已估算 ETA，直接用訂單上的 etaMinutes；否則保留為 0
+            routeETASecs = liveOrder.etaMinutes > 0 ? TimeInterval(liveOrder.etaMinutes * 60) : 0
+
+            // 依據整條路線調整顯示範圍
+            let rect = polyline.boundingMapRect
+            let regionRect = MKCoordinateRegion(rect)
+            region = regionRect
+            return
+        }
+
+        // 若尚未有後端路線，退回使用 Apple Maps 規劃路線
         let startCoord: CLLocationCoordinate2D
         let endCoord: CLLocationCoordinate2D
         if liveOrder.status == .enRouteToPickup, let u = loc.userLocation?.coordinate {
@@ -766,6 +822,14 @@ struct OrderDetailView: View {
             let regionRect = MKCoordinateRegion(rect)
             region = regionRect
         }
+    }
+
+    /// 一鍵撥打給顧客（使用 tel://）
+    private func callCustomer() {
+        let raw = liveOrder.customer.phone.trimmingCharacters(in: .whitespacesAndNewlines)
+        let digits = raw.filter { $0.isNumber || $0 == "+" }
+        guard !digits.isEmpty, let url = URL(string: "tel://\(digits)") else { return }
+        UIApplication.shared.open(url)
     }
 
     init(order: Order) {
@@ -841,20 +905,37 @@ struct OrderDetailView: View {
                 .presentationDetents([.height(360), .medium])
         }
         .safeAreaInset(edge: .bottom) {
-            Button {
-                showUpdateSheet = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "square.and.pencil")
-                    Text("更新狀態")
-                        .fontWeight(.semibold)
+            HStack(spacing: 12) {
+                Button {
+                    callCustomer()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "phone.fill")
+                        Text("打給買家")
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+
+                Button {
+                    showUpdateSheet = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.and.pencil")
+                        Text("更新訂單")
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
             .padding(.horizontal)
+            .padding(.vertical, 4)
             .background(.ultraThinMaterial)
         }
         .onAppear { computeRoute() }
@@ -1178,7 +1259,8 @@ struct CompletedOrderDetailView: View {
                 .padding(.bottom, 4)
 
                 InfoRow(title: "完成時間", value: formattedDate)
-                InfoRow(title: "顧客", value: "\(order.customer.displayName)  (☎︎ \(order.customer.phone))")
+                // 歷史訂單僅顯示顧客姓名，不再顯示電話，避免誤以為可撥打
+                InfoRow(title: "顧客", value: order.customer.displayName)
                 InfoRow(title: "送達地點", value: order.dropoff.name)
                 InfoRow(title: "商家", value: order.merchant.name)
                 InfoRow(title: "備註", value: order.notes.isEmpty ? "無" : order.notes)
@@ -1204,6 +1286,7 @@ struct CompletedOrderDetailView: View {
 }
 
 struct DelivererSettingsView: View {
+    @EnvironmentObject var app: AppState
     var onLogout: () -> Void
     var onSwitchRole: () -> Void
 
@@ -1225,7 +1308,7 @@ struct DelivererSettingsView: View {
                 }
 
                 Section("偏好設定") {
-                    Toggle(isOn: .constant(true)) {
+                    Toggle(isOn: $app.enableNewOrderNotifications) {
                         Label("接單通知", systemImage: "bell.badge.fill")
                     }
                     .tint(.accentColor)
@@ -1246,6 +1329,64 @@ struct DelivererSettingsView: View {
 }
 
 
+
+@MainActor
+final class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationManager()
+
+    override init() {
+        super.init()
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    func requestAuthorization() {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if let error = error {
+                print("Notification auth error: \(error)")
+            } else {
+                print("Notification permission granted: \(granted)")
+            }
+        }
+    }
+
+    func notifyNewOrder(_ order: Order) {
+        let content = UNMutableNotificationContent()
+        content.title = "新任務可接單"
+        content.body = "#\(order.code) $\(Int(order.fee)) · 約 \(String(format: "%.1f", order.distanceKm)) km / \(order.etaMinutes) 分"
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "new-order-\(order.id)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    func notifyStatusChanged(_ order: Order) {
+        let content = UNMutableNotificationContent()
+        content.title = "任務狀態更新：\(order.status.title)"
+        content.body = "#\(order.code) 目前狀態為 \(order.status.title)"
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "status-\(order.id)-\(order.status.rawValue)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .badge])
+    }
+}
+
 // MARK: - Utilities
 
 extension MKPolyline {
@@ -1253,5 +1394,19 @@ extension MKPolyline {
         var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: Int(pointCount))
         getCoordinates(&coords, range: NSRange(location: 0, length: Int(pointCount)))
         return coords
+    }
+
+    /// 依照 polyline 上的所有點，估算總長度（公尺）
+    var length: CLLocationDistance {
+        let pts = points()
+        let n = Int(pointCount)
+        guard n > 1 else { return 0 }
+        var dist: CLLocationDistance = 0
+        for i in 0..<(n - 1) {
+            let p1 = pts[i]
+            let p2 = pts[i + 1]
+            dist += p1.distance(to: p2)
+        }
+        return dist
     }
 }
