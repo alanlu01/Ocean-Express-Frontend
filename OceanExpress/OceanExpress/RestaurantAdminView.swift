@@ -1009,19 +1009,23 @@ struct TagsEditor: View {
             }
 
             if !items.isEmpty {
-                FlowLayout(items: items, id: \.self) { tag in
-                    HStack(spacing: 6) {
-                        Text(tag)
-                        Button {
-                            items.removeAll { $0 == tag }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: 8)], spacing: 8) {
+                    ForEach(items, id: \.self) { tag in
+                        HStack(spacing: 6) {
+                            Text(tag)
+                                .lineLimit(1)
+                            Button {
+                                items.removeAll { $0 == tag }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.accentColor.opacity(0.12), in: Capsule())
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.accentColor.opacity(0.12), in: Capsule())
                 }
                 .padding(.vertical, 4)
             }
