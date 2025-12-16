@@ -204,7 +204,7 @@ struct LoginView: View {
         case .deliverer:
             DelivererModule(onLogout: performLogout, onSwitchRole: { switchRole(to: .customer) })
         case .restaurant:
-            RestaurantComingSoonView()
+            RestaurantModule(onLogout: performLogout, onSwitchRole: { switchRole(to: .customer) })
         }
     }
 }
@@ -306,20 +306,4 @@ struct RegisterView: View {
 }
 
 // MARK: - Restaurant Placeholder View
-struct RestaurantComingSoonView: View {
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                Image(systemName: "fork.knife.circle.fill")
-                    .font(.system(size: 64))
-                    .foregroundStyle(.orange)
-                Text("餐廳端介面製作中")
-                    .font(.title3.weight(.semibold))
-                Text("敬請期待！")
-                    .foregroundStyle(.secondary)
-            }
-            .padding()
-            .navigationTitle("餐廳端")
-        }
-    }
-}
+// 已移除占位頁，改為 RestaurantModule

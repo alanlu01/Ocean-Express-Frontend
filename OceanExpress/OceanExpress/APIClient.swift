@@ -313,7 +313,7 @@ enum OrderAPI {
         let price: Int?
     }
 
-    struct StatusHistory: Decodable {
+    struct StatusHistory: Decodable, Hashable {
         let status: String
         let timestamp: Date?
     }
@@ -454,6 +454,213 @@ enum DeliveryLocationAPI {
         let flat = try APIClient.decoder().decode(FlatList.self, from: data)
         let cat = CategoryDTO(category: "預設地點", items: flat.data)
         return [cat]
+    }
+}
+
+// MARK: - Restaurant Admin
+
+enum RestaurantAdminAPI {
+    struct CustomerSummary: Decodable {
+        let name: String?
+        let phone: String?
+    }
+
+    struct OrderItemDTO: Decodable, Identifiable {
+        let id: String?
+        let name: String
+        let size: String?
+        let spiciness: String?
+        let quantity: Int?
+        let price: Int?
+    }
+
+    struct OrderDTO: Decodable, Identifiable {
+        let id: String
+        let code: String?
+        let status: String
+        let placedAt: Date?
+        let etaMinutes: Int?
+        let totalAmount: Int?
+        let deliveryFee: Int?
+        let customer: CustomerSummary?
+        let items: [OrderItemDTO]?
+        let notes: String?
+        let deliveryLocation: OrderAPI.DeliveryLocationPayload?
+        let statusHistory: [OrderAPI.StatusHistory]?
+        let riderName: String?
+        let riderPhone: String?
+
+        enum CodingKeys: String, CodingKey { case id, _id, code, status, placedAt, etaMinutes, totalAmount, deliveryFee, customer, items, notes, deliveryLocation, statusHistory, riderName, riderPhone }
+        enum OIDKeys: String, CodingKey { case oid = "$oid" }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            if let id = try? c.decode(String.self, forKey: .id) {
+                self.id = id
+            } else if let nested = try? c.nestedContainer(keyedBy: OIDKeys.self, forKey: ._id) {
+                self.id = try nested.decode(String.self, forKey: .oid)
+            } else if let raw = try? c.decode(String.self, forKey: ._id) {
+                self.id = raw
+            } else {
+                self.id = UUID().uuidString
+            }
+            code = try? c.decode(String.self, forKey: .code)
+            status = (try? c.decode(String.self, forKey: .status)) ?? "available"
+            placedAt = try? c.decode(Date.self, forKey: .placedAt)
+            etaMinutes = try? c.decode(Int.self, forKey: .etaMinutes)
+            if let total = try? c.decode(Int.self, forKey: .totalAmount) {
+                totalAmount = total
+            } else if let dbl = try? c.decode(Double.self, forKey: .totalAmount) {
+                totalAmount = Int(dbl.rounded())
+            } else { totalAmount = nil }
+            if let fee = try? c.decode(Int.self, forKey: .deliveryFee) {
+                deliveryFee = fee
+            } else if let feeD = try? c.decode(Double.self, forKey: .deliveryFee) {
+                deliveryFee = Int(feeD.rounded())
+            } else { deliveryFee = nil }
+            customer = try? c.decode(CustomerSummary.self, forKey: .customer)
+            items = try? c.decode([OrderItemDTO].self, forKey: .items)
+            notes = try? c.decode(String.self, forKey: .notes)
+            deliveryLocation = try? c.decode(OrderAPI.DeliveryLocationPayload.self, forKey: .deliveryLocation)
+            statusHistory = try? c.decode([OrderAPI.StatusHistory].self, forKey: .statusHistory)
+            riderName = try? c.decode(String.self, forKey: .riderName)
+            riderPhone = try? c.decode(String.self, forKey: .riderPhone)
+        }
+    }
+
+    struct MenuItemDTO: Decodable, Identifiable {
+        let id: String
+        let name: String
+        let description: String
+        let price: Int
+        let sizes: [String]
+        let spicinessOptions: [String]
+        let allergens: [String]
+        let tags: [String]
+        let imageUrl: String?
+        let isAvailable: Bool
+        let sortOrder: Int?
+
+        enum CodingKeys: String, CodingKey { case id, _id, name, description, price, sizes, spicinessOptions, allergens, tags, imageUrl, isAvailable, sortOrder }
+        enum OIDKeys: String, CodingKey { case oid = "$oid" }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            if let id = try? c.decode(String.self, forKey: .id) {
+                self.id = id
+            } else if let nested = try? c.nestedContainer(keyedBy: OIDKeys.self, forKey: ._id) {
+                self.id = try nested.decode(String.self, forKey: .oid)
+            } else if let raw = try? c.decode(String.self, forKey: ._id) {
+                self.id = raw
+            } else {
+                self.id = UUID().uuidString
+            }
+            name = (try? c.decode(String.self, forKey: .name)) ?? ""
+            description = (try? c.decode(String.self, forKey: .description)) ?? ""
+            if let p = try? c.decode(Int.self, forKey: .price) {
+                price = p
+            } else {
+                let dbl = (try? c.decode(Double.self, forKey: .price)) ?? 0
+                price = Int(dbl.rounded())
+            }
+            sizes = (try? c.decode([String].self, forKey: .sizes)) ?? []
+            spicinessOptions = (try? c.decode([String].self, forKey: .spicinessOptions)) ?? []
+            allergens = (try? c.decode([String].self, forKey: .allergens)) ?? []
+            tags = (try? c.decode([String].self, forKey: .tags)) ?? []
+            imageUrl = try? c.decode(String.self, forKey: .imageUrl)
+            isAvailable = (try? c.decode(Bool.self, forKey: .isAvailable)) ?? true
+            sortOrder = try? c.decode(Int.self, forKey: .sortOrder)
+        }
+    }
+
+    struct MenuItemPayload: Encodable {
+        let name: String
+        let description: String
+        let price: Int
+        let sizes: [String]
+        let spicinessOptions: [String]
+        let allergens: [String]
+        let tags: [String]
+        let imageUrl: String?
+        let isAvailable: Bool
+        let sortOrder: Int?
+    }
+
+    struct Report: Decodable {
+        struct TopItem: Decodable, Identifiable {
+            let id: String
+            let name: String
+            let quantity: Int
+            let revenue: Int
+        }
+        let range: String
+        let totalRevenue: Int
+        let orderCount: Int
+        let topItems: [TopItem]
+    }
+
+    private struct OrdersWrapper: Decodable { let data: [OrderDTO] }
+    private struct OrderWrapper: Decodable { let data: OrderDTO }
+    private struct MenuWrapper: Decodable { let data: [MenuItemDTO] }
+    private struct MenuItemWrapper: Decodable { let data: MenuItemDTO }
+    private struct ReportWrapper: Decodable { let data: Report }
+
+    static func fetchOrders(status: String?, restaurantId: String?, token: String?) async throws -> [OrderDTO] {
+        var components = URLComponents(url: APIConfig.baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/restaurant/orders"
+        var query: [URLQueryItem] = []
+        if let status { query.append(.init(name: "status", value: status)) }
+        if let restaurantId { query.append(.init(name: "restaurantId", value: restaurantId)) }
+        components?.queryItems = query.isEmpty ? nil : query
+        guard let url = components?.url else { throw APIError(message: "Invalid restaurant orders URL") }
+        let data = try await APIClient.request(url: url, token: token)
+        let wrapper = try APIClient.decoder().decode(OrdersWrapper.self, from: data)
+        return wrapper.data
+    }
+
+    static func fetchOrderDetail(id: String, token: String?) async throws -> OrderDTO {
+        let data = try await APIClient.request("restaurant/orders/\(id)", token: token)
+        let wrapper = try APIClient.decoder().decode(OrderWrapper.self, from: data)
+        return wrapper.data
+    }
+
+    static func updateOrderStatus(id: String, status: String, token: String?) async throws -> OrderDTO {
+        struct Body: Encodable { let status: String }
+        let data = try await APIClient.request("restaurant/orders/\(id)/status", method: "PATCH", token: token, body: Body(status: status))
+        if let wrapper = try? APIClient.decoder().decode(OrderWrapper.self, from: data) {
+            return wrapper.data
+        }
+        throw APIError(message: "更新訂單狀態失敗")
+    }
+
+    static func fetchMenu(token: String?) async throws -> [MenuItemDTO] {
+        let data = try await APIClient.request("restaurant/menu", token: token)
+        let wrapper = try APIClient.decoder().decode(MenuWrapper.self, from: data)
+        return wrapper.data
+    }
+
+    static func createMenuItem(_ payload: MenuItemPayload, token: String?) async throws -> MenuItemDTO {
+        let data = try await APIClient.request("restaurant/menu", method: "POST", token: token, body: payload)
+        let wrapper = try APIClient.decoder().decode(MenuItemWrapper.self, from: data)
+        return wrapper.data
+    }
+
+    static func updateMenuItem(id: String, payload: MenuItemPayload, token: String?) async throws -> MenuItemDTO {
+        let data = try await APIClient.request("restaurant/menu/\(id)", method: "PATCH", token: token, body: payload)
+        let wrapper = try APIClient.decoder().decode(MenuItemWrapper.self, from: data)
+        return wrapper.data
+    }
+
+    static func fetchReport(range: String, restaurantId: String?, token: String?) async throws -> Report {
+        var components = URLComponents(url: APIConfig.baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/restaurant/reports"
+        var query: [URLQueryItem] = [URLQueryItem(name: "range", value: range)]
+        if let restaurantId { query.append(.init(name: "restaurantId", value: restaurantId)) }
+        components?.queryItems = query
+        guard let url = components?.url else { throw APIError(message: "Invalid report URL") }
+        let data = try await APIClient.request(url: url, token: token)
+        let wrapper = try APIClient.decoder().decode(ReportWrapper.self, from: data)
+        return wrapper.data
     }
 }
 

@@ -160,6 +160,68 @@
 - （可選）`POST /delivery/:id/location` (auth: deliverer)
   - body: `{ "lat": 25.0, "lng": 121.5, "heading": 180 }`
 
+## 餐廳端（Restaurant/Admin）
+- 權限：`role=restaurant`。若帳號可管理多店，請在 API 接收/推導 `restaurantId`。
+- 狀態映射（沿用全局枚舉，前端顯示中文）：`available(未接單)`, `assigned(備餐中)`, `en_route_to_pickup(待取餐)`, `picked_up(已取餐)`, `delivering(配送中)`, `delivered(已完成)`, `cancelled(已取消)`。
+
+- `GET /restaurant/orders?status=active|history[&restaurantId=...]`
+  - 200:
+    ```json
+    {
+      "data": [
+        {
+          "id": "ord-001",
+          "code": "A1-892",
+          "status": "assigned",
+          "placedAt": "2025-11-23T02:00:00Z",
+          "etaMinutes": 12,
+          "totalAmount": 320,
+          "deliveryFee": 20,
+          "customer": { "name": "小明", "phone": "0912-000-000" },
+          "items": [
+            { "id": "menu-001", "name": "Burger", "size": "Regular", "spiciness": "Mild", "quantity": 2, "price": 180 }
+          ],
+          "notes": "請在警衛室交付",
+          "deliveryLocation": { "name": "資工系館", "lat": 25.084, "lng": 121.67 }
+        }
+      ]
+    }
+    ```
+
+- `GET /restaurant/orders/:id`
+  - 回傳同列表但含 `statusHistory[{status,timestamp}]`、`riderName/riderPhone`（若已指派外送員）。
+
+- `PATCH /restaurant/orders/:id/status`
+  - body: `{ "status": "assigned|en_route_to_pickup|picked_up|delivered|cancelled" }`
+  - 行為：更新後請推播/通知買家與外送員（事件可沿用 `order.updated`）。
+
+- `GET /restaurant/menu`
+  - 200: `{ "data": [ { "id": "menu-001", "name": "...", "description": "...", "price": 180, "sizes": ["中份"], "spicinessOptions": ["不辣"], "allergens": [], "tags": [], "imageUrl": null, "isAvailable": true, "sortOrder": 1 } ] }`
+
+- `POST /restaurant/menu`
+  - body: `{ "name": "...", "description": "...", "price": 180, "sizes": [], "spicinessOptions": [], "allergens": [], "tags": [], "imageUrl": null, "isAvailable": true, "sortOrder": 1 }`
+  - 201: `{ "data": { "id": "menu-001", ... } }`
+
+- `PATCH /restaurant/menu/:id`
+  - body: 同上欄位為可選；可用於上下架（`isAvailable`）、排序（`sortOrder`）。
+
+- 報表 `GET /restaurant/reports?range=today|7d|30d&restaurantId=...`
+  - 200:
+    ```json
+    {
+      "data": {
+        "range": "7d",
+        "totalRevenue": 25800,
+        "orderCount": 132,
+        "topItems": [
+          { "id": "menu-001", "name": "Burger", "quantity": 56, "revenue": 10080 },
+          { "id": "menu-002", "name": "沙拉", "quantity": 34, "revenue": 6120 }
+        ]
+      }
+    }
+    ```
+  - 金額整數（元），若提供自訂起迄日亦可。
+
 ## 錯誤格式
 ```json
 { "message": "invalid credentials", "code": "auth.invalid" }
@@ -185,6 +247,10 @@
 - 訂單詳情：回傳 `deliveryFee/totalAmount/riderName/riderPhone/statusHistory[{status,timestamp}]`，`items.price`；列表 `GET /orders?status=` 至少帶 `totalAmount`（可選 `deliveryFee`）。
 - 下單計價：建議由後端依菜單價 × 數量 + deliveryFee 計算並寫入 `totalAmount`；如採前端計算也請驗證。
 - 外送員聯絡：請提供 `riderName/riderPhone` 欄位（含權限控管）。
+- 餐廳端訂單：`GET /restaurant/orders`、`GET /restaurant/orders/:id`、`PATCH /restaurant/orders/:id/status`（推播買家/外送員）；回傳金額/買家電話/品項明細。
+- 餐廳端菜單管理：`GET/POST/PATCH /restaurant/menu`，支援 `isAvailable/sortOrder`，回傳 `id` 供買家下單。
+- 餐廳報表：`GET /restaurant/reports`（today/7d/30d 或自訂），回傳 `totalRevenue<int>、orderCount、topItems[{id,name,quantity,revenue}]`。
+- 權限：所有餐廳端 API 需 `role=restaurant`（多店帳號需傳 restaurantId）。
 
 ## 修改紀錄
 - 保持回應格式 `{ data }` / `{ message, code }`，時間需 ISO8601（可含毫秒）；`menuItemId` 仍為下單必填。
@@ -194,3 +260,4 @@
 - 建議新增 `GET /delivery/locations`（預設地點清單、分類）與 SSE/WebSocket `GET /orders/stream` 推播訂單狀態。
 - 2025-01-06：合併 api.md 到本檔，新增註冊 phone 欄位說明，補充待實作清單。
 - 2025-01-07：金額改整數（元）、餐廳新增 rating 欄位、地點回傳支援分類且保留前端 demo 清單，移除飲料選項相關欄位。
+- 2025-01-08：新增餐廳端 API（訂單列表/狀態更新推播、菜單管理、報表），補充餐廳權限與多店 restaurantId 需求。
