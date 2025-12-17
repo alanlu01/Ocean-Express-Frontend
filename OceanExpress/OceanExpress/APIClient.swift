@@ -382,6 +382,7 @@ enum DelivererAPI {
 
     private struct ListWrapper: Decodable { let data: [Task] }
     private struct ItemWrapper: Decodable { let data: Task }
+    private struct HistoryWrapper: Decodable { let data: [Task] }
     private struct StatusWrapper: Decodable {
         struct StatusData: Decodable { let status: String }
         let data: StatusData
@@ -407,6 +408,14 @@ enum DelivererAPI {
         return []
     }
 
+    static func fetchHistory(token: String?) async throws -> [Task] {
+        let data = try await APIClient.request("delivery/history", token: token)
+        if let wrapper = try? decoder.decode(HistoryWrapper.self, from: data) {
+            return wrapper.data
+        }
+        return []
+    }
+
     static func accept(id: String, token: String?) async throws -> Task? {
         let data = try await APIClient.request("delivery/\(id)/accept", method: "POST", token: token)
         if let wrapper = try? decoder.decode(ItemWrapper.self, from: data) {
@@ -425,6 +434,11 @@ enum DelivererAPI {
             return Task(id: id, code: nil, fee: nil, distanceKm: nil, etaMinutes: nil, status: status.data.status, notes: nil, canPickup: nil, createdAt: nil, merchant: nil, customer: nil, dropoff: nil)
         }
         return nil
+    }
+
+    static func reportIncident(id: String, note: String, token: String?) async throws {
+        struct IncidentBody: Encodable { let note: String }
+        _ = try await APIClient.request("delivery/\(id)/incident", method: "POST", token: token, body: IncidentBody(note: note))
     }
 }
 

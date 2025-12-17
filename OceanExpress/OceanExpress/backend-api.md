@@ -54,7 +54,7 @@
 - `GET /restaurants/:id/menu`
   - 200:
     ```json
-    {
+    { "data": {
       "items": [
         {
           "id": "menu-001",
@@ -65,10 +65,12 @@
           "spicinessOptions": ["Mild", "Medium", "Hot"],
           "allergens": ["peanut", "milk"],
           "tags": ["主餐", "人氣"],
-          "imageUrl": null
+          "imageUrl": null,
+          "isAvailable": true,
+          "sortOrder": 1
         }
       ]
-    }
+    } }
     ```
 
 ## 買家訂單
@@ -147,15 +149,76 @@
     `{ "data": [ { "id": "ord-001", "code": "A1-892", "fee": 85, "distanceKm": 1.2, "etaMinutes": 12, "status": "available", "merchant": { "name": "...", "lat": 25.0, "lng": 121.5 }, "customer": { "name": "...", "phone": "...", "lat": 25.01, "lng": 121.53 }, "dropoff": { "name": "資工系館" } } ] }`
   - 欄位說明：`dropoff.name` 直接來自買家下單的 `deliveryLocation.name`；若前端送出座標則回傳即可（來源為預設地點清單）。
 
+- `GET /delivery/:id` (auth: deliverer)
+  - 200: `{ "data": { ...DeliveryTask 同上... } }`
+  - 僅允許讀取：
+    - 任務為 `available`（尚未綁定外送員），或
+    - 任務的 `delivererId` 等於當前登入外送員 id。
+  - 若找不到或無權限則回傳 404/403（錯誤格式同下方通用錯誤）。
+
 - `POST /delivery/:id/accept` (auth: deliverer)
-  - 200: `{ "data": { ...DeliveryTask 同上..., "status": "assigned" } }`
+  - 用途：外送員接單並綁定該任務的 `delivererId`，同時將狀態從 `available` 改為 `assigned`。
+  - 200: `{ "data": { ...DeliveryTask 同上..., "status": "assigned", "delivererId": "<currentUserId>" } }`
+  - 400: 若訂單已被其他外送員接走或不在 `available` 狀態（可使用 `order.conflict` 之類錯誤碼）。
 
 - `GET /delivery/active` (auth: deliverer)
-  - 200: 回傳該外送員的任務列表（包含已完成、已取消，前端會自行區分 active/history）。
+  - 200: 回傳該外送員目前進行中的任務列表（例如 `assigned/en_route_to_pickup/picked_up/delivering`），不含已完成/已取消。
+
+- `GET /delivery/history` (auth: deliverer)
+  - 查詢該外送員的歷史配送紀錄（通常為 `delivered` 或 `cancelled` 的任務）。
+  - Query 參數：
+    - `from` (optional, date): 起始日期（含），格式 `YYYY-MM-DD`。
+    - `to` (optional, date): 結束日期（含），格式 `YYYY-MM-DD`。
+  - 200: `{ "data": [ { ...DeliveryTask 同上..., "status": "delivered" }, ... ] }`
+
+- `GET /delivery/earnings` (auth: deliverer)
+  - 查詢指定日期區間內外送員的收益統計，對應 OpenAPI 中的 `EarningsSummary`。
+  - Query 參數：
+    - `from` (required, date): 起始日期（含）。
+    - `to` (required, date): 結束日期（含）。
+  - 200:
+    ```json
+    {
+      "data": {
+        "from": "2025-11-01",
+        "to": "2025-11-30",
+        "currency": "TWD",
+        "totalEarnings": 12345,
+        "totalTasks": 42,
+        "byDay": [
+          { "date": "2025-11-01", "totalEarnings": 300, "taskCount": 2 },
+          { "date": "2025-11-02", "totalEarnings": 0, "taskCount": 0 }
+        ]
+      }
+    }
+    ```
+
+- `GET /delivery/notifications` (auth: deliverer)
+  - 用途：輪詢或長輪詢取得新任務/狀態更新等事件，用來在未整合推播時讓 App 保持同步。
+  - Query 參數：
+    - `sinceId` (optional): 客戶端最後一次收到的通知 id，伺服器會回傳之後的通知。
+    - `since` (optional, date-time): 依時間戳抓取之後建立的通知（ISO8601 UTC）。
+  - 200:
+    ```json
+    {
+      "data": [
+        { "id": "n1", "type": "new_task_available", "taskId": "ord-001", "status": "available", "createdAt": "2025-11-23T02:00:00Z" },
+        { "id": "n2", "type": "task_status_updated", "taskId": "ord-001", "status": "delivering", "createdAt": "2025-11-23T02:10:00Z" }
+      ]
+    }
+    ```
 
 - `PATCH /delivery/:id/status` (auth: deliverer)
+  - 用途：外送員更新自己任務的配送狀態，例如 `assigned → en_route_to_pickup → picked_up → delivering → delivered/cancelled`。
+  - 僅允許該任務的 `delivererId == currentUser.id` 的外送員呼叫；否則應回傳 403/400。
   - body: `{ "status": "en_route_to_pickup|picked_up|delivering|delivered|cancelled" }`
   - 200: `{ "data": { ...DeliveryTask 同上..., "status": "<status>" } }`
+
+- `POST /delivery/:id/incident` (auth: deliverer)
+  - 外送員回報配送異常/狀況。
+  - body: `{ "note": "文字描述" }`
+  - 200: `{ "data": { "status": "reported" } }`（或回傳更新後的任務，格式與 DeliveryTask 一致）
+  - 備註：前端已串接此端點；請確保任務權限與狀態檢查。
 
 - （可選）`POST /delivery/:id/location` (auth: deliverer)
   - body: `{ "lat": 25.0, "lng": 121.5, "heading": 180 }`
@@ -231,33 +294,26 @@
 ## 資料模型摘要
 - User: `{ id, email, role }`
 - Restaurant: `{ id, name, imageUrl?, address?, phone?, rating? }`
-- MenuItem: `{ id, name, description, price<int>, sizes[], spicinessOptions[], allergens[], tags[] }`
-- Order: `{ id, restaurantId, userId, items[], status, etaMinutes?, placedAt, requestedTime?, deliveryLocation{name,lat?,lng?}, deliveryFee<int>?, totalAmount<int>?, notes?, rating? }`
-- DeliveryTask（可共用 order id）：`{ id, riderId, status, merchant{}, customer{}, history[], fee<int> }`
+- MenuItem: `{ id, name, description, price<int>, sizes[], spicinessOptions[], allergens[], tags[], imageUrl?, isAvailable?, sortOrder? }`
+- Order: `{ id, restaurantId, userId, items[], status, etaMinutes?, placedAt, requestedTime?, deliveryLocation{name,lat?,lng?}, deliveryFee<int>?, totalAmount<int>?, notes?, rating?, riderName?, riderPhone?, statusHistory[] }`
+- DeliveryTask（可共用 order id）：`{ id, delivererId?(=riderId), status, fee<int>, distanceKm?, etaMinutes?, merchant{}, customer{}, dropoff{}, history[] }`
 
 ## 缺少 / 待實作（前端已串接或預留）
 - `POST /orders/:id/rating`：買家送達後評分（分數 1-5 + comment），需儲存並回傳於 `GET /orders/:id`、`GET /orders?status=history`。
 - `GET /delivery/locations`：回傳預設外送地點清單（含 name/lat/lng），支援分類；目前前端內建 demo，若後端提供則覆蓋使用。
 - `GET /orders/stream`（SSE/WebSocket）：依使用者 token 推播訂單狀態變更，事件 payload 同 `GET /orders/:id`；若無法即時，請提供最小化輪詢 ETag/Last-Modified。
-- 菜單欄位 `allergens`, `tags` 需在 `GET /restaurants/:id/menu` 回傳；目前不再使用 `drinkOptions` / `drinkOption*`。
-- 下單 payload 已包含 `deliveryFee`、`totalAmount`，請驗證/落庫並於訂單詳情回傳（皆為整數）。
-- 餐廳評分 `rating` 欄位請於列表/詳情回傳。
-- `GET /restaurants/:id/reviews`：回傳餐廳評論列表（rating/comment/userName/createdAt），前端菜單頁會顯示評論區塊。
-- 狀態枚舉對齊：`available, assigned, en_route_to_pickup, picked_up, delivering, delivered, cancelled`（請提供現有狀態與映射，如有 `preparing/completed`）。
-- 訂單詳情：回傳 `deliveryFee/totalAmount/riderName/riderPhone/statusHistory[{status,timestamp}]`，`items.price`；列表 `GET /orders?status=` 至少帶 `totalAmount`（可選 `deliveryFee`）。
-- 下單計價：建議由後端依菜單價 × 數量 + deliveryFee 計算並寫入 `totalAmount`；如採前端計算也請驗證。
+- 菜單欄位 `allergens`, `tags`, `isAvailable`, `sortOrder` 需在 `GET /restaurants/:id/menu` 回傳；目前不再使用 `drinkOptions` / `drinkOption*`。
+- 下單 payload 需驗證/落庫 `deliveryFee`、`totalAmount`（整數）；建議由後端計算，前端送出的值請比對。
+- 餐廳評分/評論：`rating` 欄位請於列表/詳情回傳，`GET /restaurants/:id/reviews` 回傳評論列表。
 - 外送員聯絡：請提供 `riderName/riderPhone` 欄位（含權限控管）。
-- 餐廳端訂單：`GET /restaurant/orders`、`GET /restaurant/orders/:id`、`PATCH /restaurant/orders/:id/status`（推播買家/外送員）；回傳金額/買家電話/品項明細。
-- 餐廳端菜單管理：`GET/POST/PATCH /restaurant/menu`，支援 `isAvailable/sortOrder`，回傳 `id` 供買家下單。
-- 餐廳報表：`GET /restaurant/reports`（today/7d/30d 或自訂），回傳 `totalRevenue<int>、orderCount、topItems[{id,name,quantity,revenue}]`。
-- 權限：所有餐廳端 API 需 `role=restaurant`（多店帳號需傳 restaurantId）。
+- 餐廳端：`GET /restaurant/orders`、`GET /restaurant/orders/:id`、`PATCH /restaurant/orders/:id/status`（推播買家/外送員）；`GET/POST/PATCH /restaurant/menu`；`GET /restaurant/reports`（today/7d/30d 或自訂）。
 
 ## 修改紀錄
-- 保持回應格式 `{ data }` / `{ message, code }`，時間需 ISO8601（可含毫秒）；`menuItemId` 仍為下單必填。
-- 菜單新增 `allergens`, `tags` 欄位，移除 `drinkOptions` 與相關欄位。
-- 下單 payload 目前僅送 `menuItemId/size/spiciness/addDrink/quantity`，移除 `drinkOption*`；保留 `deliveryFee/totalAmount`（整數），`deliveryLocation` 可含 lat/lng。
-- 訂單詳情回傳 `deliveryFee/totalAmount/riderName/riderPhone/statusHistory/items.price`，新增 `POST /orders/:id/rating`。
-- 建議新增 `GET /delivery/locations`（預設地點清單、分類）與 SSE/WebSocket `GET /orders/stream` 推播訂單狀態。
-- 2025-01-06：合併 api.md 到本檔，新增註冊 phone 欄位說明，補充待實作清單。
-- 2025-01-07：金額改整數（元）、餐廳新增 rating 欄位、地點回傳支援分類且保留前端 demo 清單，移除飲料選項相關欄位。
-- 2025-01-08：新增餐廳端 API（訂單列表/狀態更新推播、菜單管理、報表），補充餐廳權限與多店 restaurantId 需求。
+- 統一回應格式 `{ data }` / `{ message, code }`，時間採 ISO8601（可含毫秒）；金額欄位改整數元。
+- 下單改用 `menuItemId` 為必填，`deliveryLocation` 支援 name+lat/lng（預設清單）；配送端 `dropoff` 可僅有名稱。
+- 菜單新增 `allergens`, `tags`, `isAvailable`, `sortOrder`，移除飲料選項相關欄位。
+- 外送員任務綁定 `delivererId`（riderId）並新增/擴充 `GET /delivery/:id`、`/history`、`/earnings`、`/notifications` 等端點，配送狀態更新需驗證任務綁定。
+- 餐廳端新增訂單列表/狀態更新推播、菜單管理與報表 API，權限需 `role=restaurant`（多店需傳 `restaurantId`）。
+- 2025-01-06：合併 api.md 到本檔、註冊 phone 欄位說明，補充待實作清單。
+- 2025-01-07：金額改整數、餐廳 rating、地點分類回傳，移除飲料選項相關欄位。
+- 2025-01-08：新增餐廳端 API 與權限說明。
