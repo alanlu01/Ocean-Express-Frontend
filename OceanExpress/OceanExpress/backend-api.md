@@ -14,7 +14,8 @@
 - 狀態枚舉（前後端需對齊）：  
   - 訂單/配送：`available, assigned, en_route_to_pickup, picked_up, delivering, delivered, cancelled`
   - 角色：`customer, deliverer, restaurant`
-  - 下單地點：前端只送 `deliveryLocation.name`，不送 lat/lng；回傳也請移除 `deliveryLocation.lat/lng`。
+  - 下單地點：前端會送 `deliveryLocation.name`，若有可選地點座標則一併回傳/儲存 `lat/lng`（來源為預設地點清單）。
+- 金額欄位一律為整數（元）：`price/priceDelta/deliveryFee/totalAmount/fee` 不使用小數。
 
 ## Auth
 - `POST /auth/login`
@@ -26,24 +27,48 @@
   - 401: `{ "message": "invalid credentials", "code": "auth.invalid" }`
 
 - `POST /auth/register`
-  - body: `{ "name": "Demo User", "email": "user@example.com", "password": "..." }`
-  - 201: `{ "data": { "id": "u124", "email": "user@example.com", "role": "customer" } }`（也可直接回 token，前後端自行決定）
+  - body: `{ "name": "Demo User", "email": "user@example.com", "password": "...", "phone": "09xxxxxxxx" }`
+  - 201: `{ "data": { "id": "u124", "email": "user@example.com", "role": "customer", "phone": "09xxxxxxxx" } }`（也可直接回 token，前後端自行決定）
   - 400: `{ "message": "email exists", "code": "auth.email_taken" }`
 
 ## 餐廳 & 菜單
 - `GET /restaurants`
   - 200:
     ```json
-    { "data": [ { "id": "rest-001", "name": "Marina Burger", "imageUrl": "https://..." } ] }
+    { "data": [ { "id": "rest-001", "name": "Marina Burger", "imageUrl": "https://...", "rating": 4.5 } ] }
     ```
 
 - `GET /restaurants/:id`
-  - 200: `{ "data": { "id": "...", "name": "...", "imageUrl": "...", "address": "...", "phone": "..." } }`
+  - 200: `{ "data": { "id": "...", "name": "...", "imageUrl": "...", "address": "...", "phone": "...", "rating": 4.5 } }`
+
+- `GET /restaurants/:id/reviews`
+  - 200:
+    ```json
+    {
+      "data": [
+        { "id": "rev-001", "userName": "Alice", "rating": 5, "comment": "餐點好吃，送餐準時！", "createdAt": "2025-11-23T02:00:00Z" }
+      ]
+    }
+    ```
 
 - `GET /restaurants/:id/menu`
   - 200:
     ```json
-    { "items": [ { "id": "menu-001", "name": "Burger", "description": "...", "price": 180, "sizes": ["Regular"], "spicinessOptions": ["Mild","Medium","Hot"], "imageUrl": null } ] }
+    {
+      "items": [
+        {
+          "id": "menu-001",
+          "name": "Burger",
+          "description": "...",
+          "price": 180,
+          "sizes": ["Regular"],
+          "spicinessOptions": ["Mild", "Medium", "Hot"],
+          "allergens": ["peanut", "milk"],
+          "tags": ["主餐", "人氣"],
+          "imageUrl": null
+        }
+      ]
+    }
     ```
 
 ## 買家訂單
@@ -53,11 +78,19 @@
     {
       "restaurantId": "rest-001",
       "items": [
-        { "menuItemId": "menu-001", "size": "Regular", "spiciness": "Mild", "addDrink": true, "quantity": 2 }
+        {
+          "menuItemId": "menu-001",
+          "size": "Regular",
+          "spiciness": "Mild",
+          "addDrink": true,
+          "quantity": 2
+        }
       ],
-      "deliveryLocation": { "name": "資工系館" },
+      "deliveryLocation": { "name": "資工系館", "lat": 25.084, "lng": 121.67 },
       "notes": "請在警衛室交付",
-      "requestedTime": "2025-11-23T10:30:00Z"
+      "requestedTime": "2025-11-23T10:30:00Z",
+      "deliveryFee": 20,
+      "totalAmount": 320
     }
   ```
   - 備註：`deliveryLocation.name` 為固定地點名稱，會原樣出現在外送員 API 的 `dropoff.name`。
@@ -65,19 +98,54 @@
   - 備註：`menuItemId` 為必填，前端已改為以此欄位下單。
 
 - `GET /orders?status=active|history` (auth: customer)
-  - 200: `{ "data": [ { "id": "ord-001", "restaurantName": "Marina Burger", "status": "delivering", "etaMinutes": 8, "placedAt": "2025-11-23T02:00:00Z" } ] }`
+  - 200: `{ "data": [ { "id": "ord-001", "restaurantName": "Marina Burger", "status": "delivering", "etaMinutes": 8, "placedAt": "2025-11-23T02:00:00Z", "totalAmount": 320 } ] }`
 
 - `GET /orders/:id` (auth: customer)
-  - 200: 詳細訂單（含 items、狀態時間戳）。
+  - 200: 詳細訂單（含 items、狀態時間戳、外送費、評分、外送員電話）。
+    ```json
+    {
+      "data": {
+        "id": "ord-001",
+        "restaurantName": "Marina Burger",
+        "status": "delivering",
+        "etaMinutes": 8,
+        "placedAt": "2025-11-23T02:00:00Z",
+        "deliveryLocation": { "name": "資工系館", "lat": 25.084, "lng": 121.67 },
+        "deliveryFee": 20,
+        "totalAmount": 320,
+        "riderName": "王外送",
+        "riderPhone": "0900-000-000",
+        "items": [
+          { "name": "Burger", "size": "Regular", "spiciness": "Mild", "addDrink": true, "quantity": 2, "price": 180 }
+        ],
+        "notes": "請在警衛室交付",
+        "statusHistory": [ { "status": "preparing", "timestamp": "..." }, { "status": "delivering", "timestamp": "..." } ],
+        "rating": { "score": 5, "comment": "準時且餐點完整" }
+      }
+    }
+    ```
+
+- `POST /orders/:id/rating` (auth: customer)
+  - body: `{ "score": 1-5, "comment": "..." }`
+  - 200: `{ "data": { "score": 5, "comment": "..." } }`
 
 - `PATCH /orders/:id/cancel` (auth: customer)
   - 200: `{ "data": { "status": "cancelled" } }`
+
+## 送餐地點 & 即時推播
+- `GET /delivery/locations`  
+  - 回傳預設地點清單（用於下單選單），支援分類。範例：  
+    ```json
+    { "data": [ { "category": "校園示範", "items": [ { "name": "行政大樓", "lat": 25.1503372, "lng": 121.7655292 } ] } ] }
+    ```
+  - 前端 demo 仍會內建一組分類資料，若後端有回傳則覆蓋使用。
+- 推播/即時：建議新增 SSE / WebSocket 端點 `GET /orders/stream`（依 user token 僅推播本人訂單），事件：`order.updated` payload 同 `GET /orders/:id` 的 data；或提供 `/orders/:id/stream` 針對單筆訂單推播狀態變化。
 
 ## 外送員（Deliverer）
 - `GET /delivery/available` (auth: deliverer)
   - 回傳可接單列表（座標若有可傳，若無則僅回傳名稱）：  
     `{ "data": [ { "id": "ord-001", "code": "A1-892", "fee": 85, "distanceKm": 1.2, "etaMinutes": 12, "status": "available", "merchant": { "name": "...", "lat": 25.0, "lng": 121.5 }, "customer": { "name": "...", "phone": "...", "lat": 25.01, "lng": 121.53 }, "dropoff": { "name": "資工系館" } } ] }`
-  - 欄位說明：`dropoff.name` 直接來自買家下單的 `deliveryLocation.name`；目前前端不送 lat/lng。
+  - 欄位說明：`dropoff.name` 直接來自買家下單的 `deliveryLocation.name`；若前端送出座標則回傳即可（來源為預設地點清單）。
 
 - `GET /delivery/:id` (auth: deliverer)
   - 200: `{ "data": { ...DeliveryTask 同上... } }`
@@ -147,6 +215,68 @@
 - （可選）`POST /delivery/:id/location` (auth: deliverer)
   - body: `{ "lat": 25.0, "lng": 121.5, "heading": 180 }`
 
+## 餐廳端（Restaurant/Admin）
+- 權限：`role=restaurant`。若帳號可管理多店，請在 API 接收/推導 `restaurantId`。
+- 狀態映射（沿用全局枚舉，前端顯示中文）：`available(未接單)`, `assigned(備餐中)`, `en_route_to_pickup(待取餐)`, `picked_up(已取餐)`, `delivering(配送中)`, `delivered(已完成)`, `cancelled(已取消)`。
+
+- `GET /restaurant/orders?status=active|history[&restaurantId=...]`
+  - 200:
+    ```json
+    {
+      "data": [
+        {
+          "id": "ord-001",
+          "code": "A1-892",
+          "status": "assigned",
+          "placedAt": "2025-11-23T02:00:00Z",
+          "etaMinutes": 12,
+          "totalAmount": 320,
+          "deliveryFee": 20,
+          "customer": { "name": "小明", "phone": "0912-000-000" },
+          "items": [
+            { "id": "menu-001", "name": "Burger", "size": "Regular", "spiciness": "Mild", "quantity": 2, "price": 180 }
+          ],
+          "notes": "請在警衛室交付",
+          "deliveryLocation": { "name": "資工系館", "lat": 25.084, "lng": 121.67 }
+        }
+      ]
+    }
+    ```
+
+- `GET /restaurant/orders/:id`
+  - 回傳同列表但含 `statusHistory[{status,timestamp}]`、`riderName/riderPhone`（若已指派外送員）。
+
+- `PATCH /restaurant/orders/:id/status`
+  - body: `{ "status": "assigned|en_route_to_pickup|picked_up|delivered|cancelled" }`
+  - 行為：更新後請推播/通知買家與外送員（事件可沿用 `order.updated`）。
+
+- `GET /restaurant/menu`
+  - 200: `{ "data": [ { "id": "menu-001", "name": "...", "description": "...", "price": 180, "sizes": ["中份"], "spicinessOptions": ["不辣"], "allergens": [], "tags": [], "imageUrl": null, "isAvailable": true, "sortOrder": 1 } ] }`
+
+- `POST /restaurant/menu`
+  - body: `{ "name": "...", "description": "...", "price": 180, "sizes": [], "spicinessOptions": [], "allergens": [], "tags": [], "imageUrl": null, "isAvailable": true, "sortOrder": 1 }`
+  - 201: `{ "data": { "id": "menu-001", ... } }`
+
+- `PATCH /restaurant/menu/:id`
+  - body: 同上欄位為可選；可用於上下架（`isAvailable`）、排序（`sortOrder`）。
+
+- 報表 `GET /restaurant/reports?range=today|7d|30d&restaurantId=...`
+  - 200:
+    ```json
+    {
+      "data": {
+        "range": "7d",
+        "totalRevenue": 25800,
+        "orderCount": 132,
+        "topItems": [
+          { "id": "menu-001", "name": "Burger", "quantity": 56, "revenue": 10080 },
+          { "id": "menu-002", "name": "沙拉", "quantity": 34, "revenue": 6120 }
+        ]
+      }
+    }
+    ```
+  - 金額整數（元），若提供自訂起迄日亦可。
+
 ## 錯誤格式
 ```json
 { "message": "invalid credentials", "code": "auth.invalid" }
@@ -155,13 +285,27 @@
 
 ## 資料模型摘要
 - User: `{ id, email, role }`
-- Restaurant: `{ id, name, imageUrl?, address?, phone? }`
-- MenuItem: `{ id, name, description, price, sizes[], spicinessOptions[] }`
-- Order: `{ id, restaurantId, userId, items[], status, etaMinutes?, placedAt, requestedTime?, deliveryLocation{name}, notes? }`
-- DeliveryTask（可共用 order id）：`{ id, delivererId?, status, fee, distanceKm, etaMinutes?, merchant{}, customer{}, dropoff{}, history[] }`
+- Restaurant: `{ id, name, imageUrl?, address?, phone?, rating? }`
+- MenuItem: `{ id, name, description, price<int>, sizes[], spicinessOptions[], allergens[], tags[], imageUrl?, isAvailable?, sortOrder? }`
+- Order: `{ id, restaurantId, userId, items[], status, etaMinutes?, placedAt, requestedTime?, deliveryLocation{name,lat?,lng?}, deliveryFee<int>?, totalAmount<int>?, notes?, rating?, riderName?, riderPhone?, statusHistory[] }`
+- DeliveryTask（可共用 order id）：`{ id, delivererId?(=riderId), status, fee<int>, distanceKm?, etaMinutes?, merchant{}, customer{}, dropoff{}, history[] }`
+
+## 缺少 / 待實作（前端已串接或預留）
+- `POST /orders/:id/rating`：買家送達後評分（分數 1-5 + comment），需儲存並回傳於 `GET /orders/:id`、`GET /orders?status=history`。
+- `GET /delivery/locations`：回傳預設外送地點清單（含 name/lat/lng），支援分類；目前前端內建 demo，若後端提供則覆蓋使用。
+- `GET /orders/stream`（SSE/WebSocket）：依使用者 token 推播訂單狀態變更，事件 payload 同 `GET /orders/:id`；若無法即時，請提供最小化輪詢 ETag/Last-Modified。
+- 菜單欄位 `allergens`, `tags`, `isAvailable`, `sortOrder` 需在 `GET /restaurants/:id/menu` 回傳；目前不再使用 `drinkOptions` / `drinkOption*`。
+- 下單 payload 需驗證/落庫 `deliveryFee`、`totalAmount`（整數）；建議由後端計算，前端送出的值請比對。
+- 餐廳評分/評論：`rating` 欄位請於列表/詳情回傳，`GET /restaurants/:id/reviews` 回傳評論列表。
+- 外送員聯絡：請提供 `riderName/riderPhone` 欄位（含權限控管）。
+- 餐廳端：`GET /restaurant/orders`、`GET /restaurant/orders/:id`、`PATCH /restaurant/orders/:id/status`（推播買家/外送員）；`GET/POST/PATCH /restaurant/menu`；`GET /restaurant/reports`（today/7d/30d 或自訂）。
 
 ## 修改紀錄
-- 調整成功/錯誤回應格式說明為統一 `{ data }` / `{ message, code }`，明確標示時間需 ISO8601（可含毫秒），並強調下單的 `menuItemId` 為必填；配合前端解碼改寫。
-- 下單/回傳的 `deliveryLocation` 移除 `lat/lng`（前端只送名稱），請後端同步調整序列化/驗證；配送端 `dropoff` 若無座標也可只回傳名稱。
-- 下單 items 僅接受 `menuItemId`（不再傳 name）；後端請依 id 取菜單資料，避免因名稱變動/重複導致錯位。
-- 新增外送員綁定欄位 `delivererId`，並擴充外送員相關 API：包含任務詳情 `GET /delivery/:id`、歷史紀錄 `GET /delivery/history`、收益統計 `GET /delivery/earnings` 與通知輪詢 `GET /delivery/notifications` 等，對應 OpenAPI 中新增的 `DeliveryNotification` 和 `EarningsSummary` schema。
+- 統一回應格式 `{ data }` / `{ message, code }`，時間採 ISO8601（可含毫秒）；金額欄位改整數元。
+- 下單改用 `menuItemId` 為必填，`deliveryLocation` 支援 name+lat/lng（預設清單）；配送端 `dropoff` 可僅有名稱。
+- 菜單新增 `allergens`, `tags`, `isAvailable`, `sortOrder`，移除飲料選項相關欄位。
+- 外送員任務綁定 `delivererId`（riderId）並新增/擴充 `GET /delivery/:id`、`/history`、`/earnings`、`/notifications` 等端點，配送狀態更新需驗證任務綁定。
+- 餐廳端新增訂單列表/狀態更新推播、菜單管理與報表 API，權限需 `role=restaurant`（多店需傳 `restaurantId`）。
+- 2025-01-06：合併 api.md 到本檔、註冊 phone 欄位說明，補充待實作清單。
+- 2025-01-07：金額改整數、餐廳 rating、地點分類回傳，移除飲料選項相關欄位。
+- 2025-01-08：新增餐廳端 API 與權限說明。

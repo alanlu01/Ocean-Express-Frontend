@@ -398,7 +398,7 @@ extension DelivererAPI.Task {
     func toOrder(overrides existing: Order? = nil) -> Order {
         var base = existing ?? Order(
             code: code ?? (id ?? "N/A"),
-            fee: fee ?? 0,
+            fee: fee.map(Double.init) ?? 0,
             distanceKm: distanceKm ?? 0,
             etaMinutes: etaMinutes ?? 0,
             merchant: merchant?.toPlace() ?? Place(name: "未知店家", coordinate: defaultCoordinate),
@@ -410,7 +410,7 @@ extension DelivererAPI.Task {
         )
         base.id = id ?? existing?.id ?? UUID().uuidString
         base.code = code ?? base.code
-        base.fee = fee ?? base.fee
+        base.fee = fee.map(Double.init) ?? base.fee
         base.distanceKm = distanceKm ?? base.distanceKm
         base.etaMinutes = etaMinutes ?? base.etaMinutes
         base.notes = notes ?? base.notes
@@ -466,8 +466,8 @@ final class AppState: ObservableObject {
             for await list in service.streamAvailableOrders() {
                 let available = list.filter { $0.status == .available }
                 let currentIDs = Set(available.map { $0.id })
-                let newlyAdded = available.filter { !lastAvailableOrderIDs.contains($0.id) }
-                lastAvailableOrderIDs = currentIDs
+                let newlyAdded = available.filter { !self.lastAvailableOrderIDs.contains($0.id) }
+                self.lastAvailableOrderIDs = currentIDs
                 await MainActor.run {
                     self.availableOrders = available
                     newlyAdded.forEach { order in
@@ -1297,7 +1297,7 @@ struct DelivererSettingsView: View {
                     Button {
                         onSwitchRole()
                     } label: {
-                        Label("切換身份", systemImage: "arrow.triangle.2.circlepath")
+                        Label("切換成買家", systemImage: "arrow.triangle.2.circlepath")
                     }
 
                     Button(role: .destructive) {

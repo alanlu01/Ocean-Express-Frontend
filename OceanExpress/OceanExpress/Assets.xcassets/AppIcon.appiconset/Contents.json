@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "image3.png",
+      "filename" : "Ocean_Express_1024.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -13,7 +13,6 @@
           "value" : "dark"
         }
       ],
-      "filename" : "image4.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -25,7 +24,6 @@
           "value" : "tinted"
         }
       ],
-      "filename" : "image3 1.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
