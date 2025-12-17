@@ -54,7 +54,7 @@
 - `GET /restaurants/:id/menu`
   - 200:
     ```json
-    {
+    { "data": {
       "items": [
         {
           "id": "menu-001",
@@ -65,10 +65,12 @@
           "spicinessOptions": ["Mild", "Medium", "Hot"],
           "allergens": ["peanut", "milk"],
           "tags": ["主餐", "人氣"],
-          "imageUrl": null
+          "imageUrl": null,
+          "isAvailable": true,
+          "sortOrder": 1
         }
       ]
-    }
+    } }
     ```
 
 ## 買家訂單
@@ -211,6 +213,12 @@
   - 僅允許該任務的 `delivererId == currentUser.id` 的外送員呼叫；否則應回傳 403/400。
   - body: `{ "status": "en_route_to_pickup|picked_up|delivering|delivered|cancelled" }`
   - 200: `{ "data": { ...DeliveryTask 同上..., "status": "<status>" } }`
+
+- `POST /delivery/:id/incident` (auth: deliverer)
+  - 外送員回報配送異常/狀況。
+  - body: `{ "note": "文字描述" }`
+  - 200: `{ "data": { "status": "reported" } }`（或回傳更新後的任務，格式與 DeliveryTask 一致）
+  - 備註：前端已串接此端點；請確保任務權限與狀態檢查。
 
 - （可選）`POST /delivery/:id/location` (auth: deliverer)
   - body: `{ "lat": 25.0, "lng": 121.5, "heading": 180 }`

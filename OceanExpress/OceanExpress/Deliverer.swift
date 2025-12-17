@@ -228,8 +228,11 @@ final class MockOrderService: OrderServiceProtocol {
     }
 
     func fetchActiveTasks() async throws -> [Order] {
-        // 回傳全部訂單，由 AppState 根據 isActive 拆成進行中與歷史
-        return orders
+        orders.filter { $0.isActive }
+    }
+
+    func fetchHistoryTasks() async throws -> [Order] {
+        orders.filter { !$0.isActive }
     }
 
     func accept(order: Order) async throws -> Order {
@@ -307,6 +310,7 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
 protocol OrderServiceProtocol {
     func streamAvailableOrders() -> AsyncStream<[Order]>
     func fetchActiveTasks() async throws -> [Order]
+    func fetchHistoryTasks() async throws -> [Order]
     func accept(order: Order) async throws -> Order
     func updateStatus(order: Order, to status: OrderStatus) async throws -> Order
     func reportIncident(order: Order, note: String) async throws
@@ -350,6 +354,12 @@ final class NetworkOrderService: OrderServiceProtocol {
         return list.map { $0.toOrder() }
     }
 
+    func fetchHistoryTasks() async throws -> [Order] {
+        guard let token = tokenProvider(), !token.isEmpty else { return [] }
+        let list = try await DelivererAPI.fetchHistory(token: token)
+        return list.map { $0.toOrder() }
+    }
+
     func accept(order: Order) async throws -> Order {
         let token = tokenProvider()
         if let task = try await DelivererAPI.accept(id: order.id, token: token) {
@@ -371,9 +381,8 @@ final class NetworkOrderService: OrderServiceProtocol {
     }
 
     func reportIncident(order: Order, note: String) async throws {
-        // TODO: 改成真正呼叫後端 `POST /delivery/{id}/incident`
-        // 目前先簡單印出，避免中斷流程
-        print("Report incident for order \(order.id): \(note)")
+        let token = tokenProvider()
+        try await DelivererAPI.reportIncident(id: order.id, note: note, token: token)
     }
 }
 
@@ -522,9 +531,8 @@ final class AppState: ObservableObject {
 
     func refreshTasks() async {
         do {
-            let tasks = try await service.fetchActiveTasks()
-            let actives = tasks.filter { $0.isActive }
-            let histories = tasks.filter { !$0.isActive }
+            let actives = try await service.fetchActiveTasks()
+            let histories = try await service.fetchHistoryTasks()
             activeTasks = actives
             history = histories.sorted { $0.createdAt < $1.createdAt }
             dailyEarnings = AppState.computeEarnings(from: histories)
