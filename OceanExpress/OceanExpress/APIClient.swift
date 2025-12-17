@@ -228,7 +228,10 @@ enum RestaurantAPI {
     static func fetchMenu(restaurantId: String) async throws -> [MenuItemDTO] {
         let data = try await APIClient.request("restaurants/\(restaurantId)/menu")
         if let wrapper = try? APIClient.decoder().decode(MenuListResponse.self, from: data) {
-            return wrapper.items
+            return wrapper.data.items
+        }
+        if let legacy = try? APIClient.decoder().decode(LegacyMenuListResponse.self, from: data) {
+            return legacy.items
         }
         return try APIClient.decoder().decode([MenuItemDTO].self, from: data)
     }
@@ -242,7 +245,11 @@ enum RestaurantAPI {
     }
 
     private struct RestaurantListResponse: Decodable { let data: [RestaurantSummary] }
-    private struct MenuListResponse: Decodable { let items: [MenuItemDTO] }
+    private struct MenuListResponse: Decodable {
+        let data: Items
+        struct Items: Decodable { let items: [MenuItemDTO] }
+    }
+    private struct LegacyMenuListResponse: Decodable { let items: [MenuItemDTO] }
     private struct ReviewListResponse: Decodable { let data: [Review] }
 }
 

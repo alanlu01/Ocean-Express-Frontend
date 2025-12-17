@@ -51,6 +51,8 @@ components:
           type: array
           items: { type: string }
         imageUrl: { type: string, nullable: true }
+        isAvailable: { type: boolean, nullable: true }
+        sortOrder: { type: integer, format: int32, nullable: true }
       required: [id, name, description, price]
 
     OrderItemPayload:
@@ -272,9 +274,12 @@ paths:
               schema:
                 type: object
                 properties:
-                  items:
-                    type: array
-                    items: { $ref: '#/components/schemas/MenuItem' }
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/MenuItem' }
 
   /restaurants/{id}/reviews:
     get:
@@ -514,6 +519,23 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/DeliveryTask' }
 
+  /delivery/history:
+    get:
+      summary: Past tasks for deliverer
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DeliveryTask' }
+
   /delivery/{id}/status:
     patch:
       summary: Update delivery status
@@ -545,6 +567,39 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/DeliveryTask'
+
+  /delivery/{id}/incident:
+    post:
+      summary: Report incident for a delivery
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+              required: [note]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, example: reported }
+                    additionalProperties: true
 
   /delivery/locations:
     get:
