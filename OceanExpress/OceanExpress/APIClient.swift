@@ -179,13 +179,14 @@ enum RestaurantAPI {
         let name: String
         let description: String
         let price: Int
+        let isAvailable: Bool
         let sizes: [String]?
         let spicinessOptions: [String]?
         let allergens: [String]?
         let tags: [String]?
 
         enum CodingKeys: String, CodingKey {
-            case id, name, description, price, sizes, spicinessOptions, _id, allergens, tags
+            case id, name, description, price, sizes, spicinessOptions, _id, allergens, tags, isAvailable
         }
 
         enum OIDKeys: String, CodingKey {
@@ -211,6 +212,7 @@ enum RestaurantAPI {
                 let doublePrice = try container.decode(Double.self, forKey: .price)
                 price = Int(doublePrice.rounded())
             }
+            isAvailable = (try? container.decode(Bool.self, forKey: .isAvailable)) ?? true
             sizes = try? container.decode([String].self, forKey: .sizes)
             spicinessOptions = try? container.decode([String].self, forKey: .spicinessOptions)
             allergens = try? container.decode([String].self, forKey: .allergens)
@@ -692,6 +694,7 @@ extension RestaurantAPI.MenuItemDTO {
             name: name,
             description: description,
             price: price,
+            isAvailable: isAvailable,
             sizes: sizes ?? ["中份"],
             spicinessOptions: spicinessOptions ?? ["不辣", "小辣", "中辣"],
             allergens: allergens ?? [],

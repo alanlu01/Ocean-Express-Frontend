@@ -97,6 +97,7 @@
   ```
   - 備註：`deliveryLocation.name` 為固定地點名稱，會原樣出現在外送員 API 的 `dropoff.name`。
   - 201: `{ "data": { "id": "ord-001", "status": "available", "etaMinutes": 20 } }`
+  - 400: 若品項已暫停販售（`isAvailable=false`），建議回傳 `{ "message": "menu item unavailable", "code": "menu.unavailable" }`。
   - 備註：`menuItemId` 為必填，前端已改為以此欄位下單。
 
 - `GET /orders?status=active|history` (auth: customer)
@@ -266,7 +267,7 @@
   - 201: `{ "data": { "id": "menu-001", ... } }`
 
 - `PATCH /restaurant/menu/:id`
-  - body: 同上欄位為可選；可用於上下架（`isAvailable`）、排序（`sortOrder`）。
+  - body: 同上欄位為可選；可用於上下架（`isAvailable` 切換暫停販售）、排序（`sortOrder`）。
 
 - 報表 `GET /restaurant/reports?range=today|7d|30d&restaurantId=...`
   - 200:
@@ -289,7 +290,7 @@
 ```json
 { "message": "invalid credentials", "code": "auth.invalid" }
 ```
-常見錯誤碼：`auth.invalid`, `auth.forbidden`, `order.not_found`, `order.conflict`, `validation.failed`, `server.error`
+常見錯誤碼：`auth.invalid`, `auth.forbidden`, `order.not_found`, `order.conflict`, `menu.unavailable`, `validation.failed`, `server.error`
 
 ## 資料模型摘要
 - User: `{ id, email, role }`

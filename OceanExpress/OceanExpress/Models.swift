@@ -20,6 +20,7 @@ enum AppModels {
         let name: String
         let description: String
         let price: Int
+        let isAvailable: Bool
         let sizes: [String]
         let spicinessOptions: [String]
         let allergens: [String]
@@ -31,6 +32,7 @@ enum AppModels {
              name: String,
              description: String,
              price: Int,
+             isAvailable: Bool = true,
              sizes: [String] = ["中份"],
              spicinessOptions: [String] = ["不辣", "小辣", "中辣"],
              allergens: [String] = [],
@@ -41,6 +43,7 @@ enum AppModels {
             self.name = name
             self.description = description
             self.price = price
+            self.isAvailable = isAvailable
             self.sizes = sizes
             self.spicinessOptions = spicinessOptions
             self.allergens = allergens
@@ -55,6 +58,7 @@ enum AppModels {
                 name: "炙烤鮭魚",
                 description: "檸檬奶油醬、爐烤時蔬",
                 price: 188,
+                isAvailable: true,
                 sizes: ["中份", "大份"],
                 spicinessOptions: ["不辣", "小辣"],
                 allergens: ["魚類"],
@@ -65,6 +69,7 @@ enum AppModels {
                 name: "奶油蛤蜊濃湯",
                 description: "紐英倫風味，佐香草脆麵包",
                 price: 95,
+                isAvailable: true,
                 sizes: ["單碗"],
                 spicinessOptions: ["不辣"],
                 allergens: ["甲殼類", "奶製品"],
@@ -75,6 +80,7 @@ enum AppModels {
                 name: "芝麻海帶沙拉",
                 description: "脆爽海帶搭配和風芝麻醬",
                 price: 75,
+                isAvailable: true,
                 sizes: ["單份"],
                 spicinessOptions: ["不辣"],
                 allergens: ["芝麻"],

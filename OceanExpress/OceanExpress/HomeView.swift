@@ -205,6 +205,11 @@ fileprivate struct RestaurantMenuView: View {
                                         .foregroundColor(.secondary)
                                 }
                             }
+                            if !item.isAvailable {
+                                Label("暫停販售", systemImage: "pause.fill")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.orange)
+                            }
                             if !item.tags.isEmpty {
                                 HStack(spacing: 6) {
                                     ForEach(item.tags.prefix(3), id: \.self) { tag in
@@ -225,6 +230,8 @@ fileprivate struct RestaurantMenuView: View {
                         }
                         .padding(.vertical, 4)
                     }
+                    .disabled(!item.isAvailable)
+                    .opacity(item.isAvailable ? 1 : 0.6)
                 }
             }
         }

@@ -32,6 +32,13 @@ struct MenuItemDetailView: View {
 
     var body: some View {
         Form {
+            if !item.isAvailable {
+                Section {
+                    Label("此餐點暫停販售", systemImage: "pause.fill")
+                        .foregroundStyle(.orange)
+                }
+            }
+
             Section(header: Text("客製化")) {
                 Picker("份量", selection: $size) {
                     ForEach(item.sizes, id: \.self) { Text($0) }
@@ -89,12 +96,12 @@ struct MenuItemDetailView: View {
             Button {
                 attemptAdd()
             } label: {
-                Label("加入購物車", systemImage: "cart.badge.plus")
+                Label(item.isAvailable ? "加入購物車" : "暫停販售", systemImage: item.isAvailable ? "cart.badge.plus" : "pause.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .tint(.accentColor)
-            .disabled(isAdding)
+            .disabled(isAdding || !item.isAvailable)
             .padding(.horizontal)
             .padding(.vertical, 8)
             .background(.ultraThinMaterial)
@@ -110,6 +117,7 @@ struct MenuItemDetailView: View {
             showClearConfirm = true
             return
         }
+        guard item.isAvailable else { return }
         addToCart()
     }
 
