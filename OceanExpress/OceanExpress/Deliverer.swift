@@ -1461,6 +1461,8 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     private let defaults = UserDefaults.standard
     private let tokenKey = "apns_device_token"
     private let uploadedKey = "apns_token_uploaded"
+    private let enabledKey = "push_enabled_for_session"
+    var isPushEnabled: Bool { defaults.bool(forKey: enabledKey) }
     private(set) var apnsToken: String? {
         didSet {
             if let apnsToken {
@@ -1471,11 +1473,32 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     override init() {
         super.init()
+        defaults.register(defaults: [enabledKey: false, uploadedKey: false])
         apnsToken = defaults.string(forKey: tokenKey)
         UNUserNotificationCenter.current().delegate = self
     }
 
+    func enablePushForSession() {
+        defaults.set(true, forKey: enabledKey)
+        requestAuthorization()
+        DispatchQueue.main.async {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+    }
+
+    func disablePushForSession() {
+        defaults.set(false, forKey: enabledKey)
+        defaults.set(false, forKey: uploadedKey)
+        let center = UNUserNotificationCenter.current()
+        center.removeAllPendingNotificationRequests()
+        center.removeAllDeliveredNotifications()
+        DispatchQueue.main.async {
+            UIApplication.shared.unregisterForRemoteNotifications()
+        }
+    }
+
     func requestAuthorization() {
+        guard isPushEnabled else { return }
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
@@ -1492,6 +1515,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     }
 
     func registerDeviceIfNeeded(userId: String?, role: String?, restaurantId: String?, authToken: String?) {
+        guard isPushEnabled, let authToken, !authToken.isEmpty else { return }
         guard let token = apnsToken else { return }
         let alreadyUploaded = defaults.bool(forKey: uploadedKey)
         Task {
@@ -1506,6 +1530,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     }
 
     func notifyNewOrder(_ order: Order) {
+        guard isPushEnabled else { return }
         let content = UNMutableNotificationContent()
         content.title = "新任務可接單"
         content.body = "#\(order.code) $\(Int(order.fee)) · 約 \(String(format: "%.1f", order.distanceKm)) km / \(order.etaMinutes) 分"
@@ -1520,6 +1545,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     }
 
     func notifyStatusChanged(_ order: Order) {
+        guard isPushEnabled else { return }
         let content = UNMutableNotificationContent()
         content.title = "任務狀態更新：\(order.status.title)"
         content.body = "#\(order.code) 目前狀態為 \(order.status.title)"
@@ -1534,6 +1560,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     }
 
     func notify(title: String, body: String) {
+        guard isPushEnabled else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

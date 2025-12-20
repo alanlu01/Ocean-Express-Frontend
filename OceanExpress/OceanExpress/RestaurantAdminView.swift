@@ -497,6 +497,10 @@ final class RestaurantAdminStore: ObservableObject {
             lastOrderCount = currentActiveCount
             return
         }
+        guard NotificationManager.shared.isPushEnabled else {
+            lastOrderCount = currentActiveCount
+            return
+        }
         lastOrderCount = currentActiveCount
         // 本地通知提示有新訂單（推播占位）
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in

@@ -151,6 +151,7 @@ struct LoginView: View {
         UserDefaults.standard.removeObject(forKey: "auth_role")
         UserDefaults.standard.removeObject(forKey: "auth_user_id")
         UserDefaults.standard.removeObject(forKey: "restaurant_id")
+        NotificationManager.shared.disablePushForSession()
         withAnimation { isLoggedIn = false }
     }
 
@@ -162,6 +163,7 @@ struct LoginView: View {
             role = restored
             serverRole = restored
         }
+        NotificationManager.shared.enablePushForSession()
         // 補傳推播裝置資訊（若尚未上傳）
         if let apns = NotificationManager.shared.apnsToken {
             NotificationManager.shared.registerDeviceIfNeeded(
@@ -205,6 +207,7 @@ struct LoginView: View {
                 UserDefaults.standard.set("demo-user", forKey: "auth_user_id")
                 DemoConfig.setDemo(enabled: true)
                 serverRole = role
+                NotificationManager.shared.enablePushForSession()
                 isLoading = false
                 withAnimation { isLoggedIn = true }
             }
@@ -231,6 +234,7 @@ struct LoginView: View {
                 } else {
                     UserDefaults.standard.removeObject(forKey: "restaurant_id")
                 }
+                NotificationManager.shared.enablePushForSession()
                 let selected = role
                 switch backendRole {
                 case .restaurant:

@@ -603,7 +603,8 @@ struct OrderStatusView: View {
     }
 
     private func requestNotificationPermissionIfNeeded() {
-        guard UserDefaults.standard.bool(forKey: "customer_push_enabled") else { return }
+        guard NotificationManager.shared.isPushEnabled,
+              UserDefaults.standard.bool(forKey: "customer_push_enabled") else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 }
@@ -732,6 +733,7 @@ final class CustomerOrderStore: ObservableObject {
     }
 
     private func scheduleLocalNotification(body: String) {
+        guard NotificationManager.shared.isPushEnabled else { return }
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
         let content = UNMutableNotificationContent()
@@ -744,7 +746,8 @@ final class CustomerOrderStore: ObservableObject {
     }
 
     private func notifyStatusChanges(with orders: [CustomerOrder]) {
-        guard UserDefaults.standard.bool(forKey: "customer_push_enabled") else { return }
+        guard NotificationManager.shared.isPushEnabled,
+              UserDefaults.standard.bool(forKey: "customer_push_enabled") else { return }
         let center = UNUserNotificationCenter.current()
         orders.forEach { order in
             let previous = lastStatusById[order.id]
