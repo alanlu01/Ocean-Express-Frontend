@@ -10,6 +10,12 @@ enum DemoConfig {
         return UserDefaults.standard.bool(forKey: storageKey)
     }
 
+    /// 是否為 demo 帳號登入（僅 demo-token 時才視為假資料模式）
+    static var isDemoAccount: Bool {
+        guard isEnabled else { return false }
+        return UserDefaults.standard.string(forKey: "auth_token") == "demo-token"
+    }
+
     static func setDemo(enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: storageKey)
     }

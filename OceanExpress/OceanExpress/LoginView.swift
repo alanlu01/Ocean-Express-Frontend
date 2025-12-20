@@ -41,6 +41,7 @@ struct LoginView: View {
     @State private var alertMessage = ""
     @State private var isLoggedIn = false
     @State private var role: AuthRole = .customer
+    @State private var serverRole: AuthRole? = nil
 
     var body: some View {
         NavigationStack {
@@ -139,19 +140,49 @@ struct LoginView: View {
             .alert(isPresented: $showAlert) {
                 Alert(title: Text("登入訊息"), message: Text(alertMessage), dismissButton: .default(Text("確定")))
             }
+            .task {
+                await restoreSessionIfNeeded()
+            }
         }
     }
 
     private func performLogout() {
         UserDefaults.standard.removeObject(forKey: "auth_token")
+        UserDefaults.standard.removeObject(forKey: "auth_role")
+        UserDefaults.standard.removeObject(forKey: "auth_user_id")
+        UserDefaults.standard.removeObject(forKey: "restaurant_id")
         withAnimation { isLoggedIn = false }
     }
 
-    private func switchRole(to newRole: AuthRole) {
-        withAnimation {
-            role = newRole
-            isLoggedIn = true
+    private func restoreSessionIfNeeded() async {
+        guard !isLoggedIn else { return }
+        let defaults = UserDefaults.standard
+        guard let token = defaults.string(forKey: "auth_token"), !token.isEmpty else { return }
+        if let savedRole = defaults.string(forKey: "auth_role"), let restored = AuthRole(rawValue: savedRole) {
+            role = restored
+            serverRole = restored
         }
+        // 補傳推播裝置資訊（若尚未上傳）
+        if let apns = NotificationManager.shared.apnsToken {
+            NotificationManager.shared.registerDeviceIfNeeded(
+                userId: defaults.string(forKey: "auth_user_id"),
+                role: defaults.string(forKey: "auth_role"),
+                restaurantId: defaults.string(forKey: "restaurant_id"),
+                authToken: token
+            )
+        }
+        withAnimation { isLoggedIn = true }
+    }
+
+    private func attemptSwitchRole(to newRole: AuthRole) {
+        // 買家/外送員可互換；餐廳介面需餐廳帳號或 Demo
+        let allowedRestaurant = DemoConfig.isEnabled || serverRole == .restaurant
+        if newRole == .restaurant && !allowedRestaurant {
+            alertMessage = "此帳號無餐廳權限，無法進入餐廳介面。"
+            showAlert = true
+            return
+        }
+        withAnimation { role = newRole; isLoggedIn = true }
     }
 
     func login() {
@@ -170,21 +201,64 @@ struct LoginView: View {
                 alertMessage = "⚠️ Demo 模式啟用"
                 showAlert = true
                 UserDefaults.standard.set("demo-token", forKey: "auth_token")
+                UserDefaults.standard.set(role.rawValue, forKey: "auth_role")
+                UserDefaults.standard.set("demo-user", forKey: "auth_user_id")
                 DemoConfig.setDemo(enabled: true)
+                serverRole = role
                 isLoading = false
                 withAnimation { isLoggedIn = true }
             }
             return
         } else {
             DemoConfig.setDemo(enabled: false)
+            serverRole = nil
+            UserDefaults.standard.removeObject(forKey: "auth_role")
+            UserDefaults.standard.removeObject(forKey: "auth_user_id")
+            UserDefaults.standard.removeObject(forKey: "restaurant_id")
         }
 
         Task {
             do {
                 let result = try await AuthAPI.login(email: email, password: password)
                 DemoConfig.setDemo(enabled: false)
+                let backendRole = AuthRole(rawValue: result.user.role) ?? .customer
+                serverRole = backendRole
                 UserDefaults.standard.set(result.token, forKey: "auth_token")
+                UserDefaults.standard.set(backendRole.rawValue, forKey: "auth_role")
+                UserDefaults.standard.set(result.user.id, forKey: "auth_user_id")
+                if let rid = result.user.restaurantId, !rid.isEmpty {
+                    UserDefaults.standard.set(rid, forKey: "restaurant_id")
+                } else {
+                    UserDefaults.standard.removeObject(forKey: "restaurant_id")
+                }
+                let selected = role
+                switch backendRole {
+                case .restaurant:
+                    if selected != .restaurant {
+                        alertMessage = "此帳號角色為「餐廳」，已切換。"
+                        showAlert = true
+                    }
+                    role = .restaurant
+                case .deliverer:
+                    if selected != .deliverer {
+                        alertMessage = "此帳號角色為「外送員」，已切換。"
+                        showAlert = true
+                    }
+                    role = .deliverer
+                case .customer:
+                    // 買家帳號允許在買家 / 外送員介面之間切換
+                    if selected == .restaurant {
+                        alertMessage = "此帳號無餐廳權限，已切換為買家。"
+                        showAlert = true
+                        role = .customer
+                    } else {
+                        role = selected
+                    }
+                }
                 isLoading = false
+                if let token = NotificationManager.shared.apnsToken {
+                    NotificationManager.shared.registerDeviceIfNeeded(userId: result.user.id, role: backendRole.rawValue, restaurantId: result.user.restaurantId, authToken: result.token)
+                }
                 withAnimation { isLoggedIn = true }
             } catch {
                 DispatchQueue.main.async {
@@ -200,11 +274,11 @@ struct LoginView: View {
     private func roleDestination(_ role: AuthRole) -> some View {
         switch role {
         case .customer:
-            HomeView(onLogout: performLogout, onSwitchRole: { switchRole(to: .deliverer) })
+            HomeView(onLogout: performLogout, onSwitchRole: { attemptSwitchRole(to: .deliverer) })
         case .deliverer:
-            DelivererModule(onLogout: performLogout, onSwitchRole: { switchRole(to: .customer) })
+            DelivererModule(onLogout: performLogout, onSwitchRole: { attemptSwitchRole(to: .customer) })
         case .restaurant:
-            RestaurantModule(onLogout: performLogout, onSwitchRole: { switchRole(to: .customer) })
+            RestaurantModule(onLogout: performLogout, onSwitchRole: { attemptSwitchRole(to: .customer) })
         }
     }
 }

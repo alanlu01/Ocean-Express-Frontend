@@ -158,6 +158,7 @@ protocol RestaurantServiceProtocol {
     func fetchMenu() async throws -> [RestaurantMenuItemAdmin]
     func createMenuItem(_ item: RestaurantMenuItemAdmin) async throws -> RestaurantMenuItemAdmin
     func updateMenuItem(_ item: RestaurantMenuItemAdmin) async throws -> RestaurantMenuItemAdmin
+    func deleteMenuItem(id: String) async throws
     func fetchReport(range: ReportRange) async throws -> RestaurantReport
     func fetchReviews(restaurantId: String) async throws -> [RestaurantAPI.Review]
 }
@@ -196,6 +197,10 @@ final class NetworkRestaurantService: RestaurantServiceProtocol {
         let payload = item.toPayload()
         let dto = try await RestaurantAdminAPI.updateMenuItem(id: item.id, payload: payload, token: tokenProvider())
         return dto.toModel()
+    }
+
+    func deleteMenuItem(id: String) async throws {
+        try await RestaurantAdminAPI.deleteMenuItem(id: id, token: tokenProvider())
     }
 
     func fetchReport(range: ReportRange) async throws -> RestaurantReport {
@@ -327,6 +332,10 @@ final class DemoRestaurantService: RestaurantServiceProtocol {
         return try await createMenuItem(item)
     }
 
+    func deleteMenuItem(id: String) async throws {
+        menu.removeAll { $0.id == id }
+    }
+
     func fetchReport(range: ReportRange) async throws -> RestaurantReport {
         let total = (activeOrders + historyOrders).reduce(0) { $0 + ($1.totalAmount ?? 0) }
         let top: [RestaurantTopItem] = menu.prefix(3).enumerated().map { idx, item in
@@ -356,7 +365,8 @@ final class RestaurantAdminStore: ObservableObject {
     @Published var reportRange: ReportRange = .today
 
     private let service: RestaurantServiceProtocol
-    private let restaurantId: String?
+    private var restaurantId: String?
+    private let defaultRestaurantId: String?
     private var lastOrderCount: Int = 0
     private var demoTimer: Timer?
     private var demoCounter: Int = 300
@@ -364,9 +374,14 @@ final class RestaurantAdminStore: ObservableObject {
     init(service: RestaurantServiceProtocol, restaurantId: String? = nil) {
         self.service = service
         self.restaurantId = restaurantId
-        if DemoConfig.isEnabled {
+        self.defaultRestaurantId = restaurantId
+        if DemoConfig.isDemoAccount {
             startDemoOrders()
         }
+    }
+
+    deinit {
+        stopDemoOrders()
     }
 
     func loadOrders() async {
@@ -375,6 +390,17 @@ final class RestaurantAdminStore: ObservableObject {
             let history = try await service.fetchOrders(status: "history")
             self.activeOrders = active
             self.historyOrders = history
+            // 優先使用建構時注入的 restaurantId，否則從訂單回傳帶回。
+            if restaurantId == nil {
+                restaurantId = active.compactMap { $0.restaurantId }.first ?? history.compactMap { $0.restaurantId }.first
+            }
+            if restaurantId == nil, let firstId = (active + history).compactMap({ $0.restaurantId }).first {
+                restaurantId = firstId
+            }
+            if restaurantId == nil {
+                restaurantId = defaultRestaurantId ?? ProcessInfo.processInfo.environment["RESTAURANT_ID"] ?? UserDefaults.standard.string(forKey: "restaurant_id")
+            }
+            print("📝 loadOrders captured restaurantId=\(restaurantId ?? "nil")")
             notifyIfNewOrder(currentActiveCount: active.count)
         } catch {
             statusMessage = error.localizedDescription
@@ -386,6 +412,7 @@ final class RestaurantAdminStore: ObservableObject {
             let updated = try await service.updateOrderStatus(id: order.id, status: status)
             replaceOrder(updated)
             statusMessage = "狀態已更新並推播通知"
+            await loadOrders()
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -401,19 +428,24 @@ final class RestaurantAdminStore: ObservableObject {
 
     func saveMenuItem(_ item: RestaurantMenuItemAdmin) async {
         do {
-            let saved: RestaurantMenuItemAdmin
             if item.isNew {
-                saved = try await service.createMenuItem(item)
+                _ = try await service.createMenuItem(item)
             } else {
-                saved = try await service.updateMenuItem(item)
+                _ = try await service.updateMenuItem(item)
             }
-            if let idx = menuItems.firstIndex(where: { $0.id == saved.id }) {
-                menuItems[idx] = saved
-            } else {
-                menuItems.append(saved)
-            }
-            menuItems.sort { ($0.sortOrder ?? 0) < ($1.sortOrder ?? 0) }
+            // 以後端回傳為準，同步一次列表，避免本地狀態與伺服器不一致
+            await loadMenu()
             statusMessage = "菜單已儲存"
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func deleteMenuItem(id: String) async {
+        do {
+            try await service.deleteMenuItem(id: id)
+            await loadMenu()
+            statusMessage = "餐點已刪除"
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -428,9 +460,17 @@ final class RestaurantAdminStore: ObservableObject {
     }
 
     func loadReviews() async {
-        guard let restaurantId = restaurantId ?? activeOrders.first?.restaurantId else { return }
+        guard let restaurantId = resolvedRestaurantId, !restaurantId.isEmpty else {
+            statusMessage = "無法取得餐廳 ID，請先重新整理訂單"
+            print("📝 loadReviews skip: missing restaurantId. active=\(activeOrders.count) history=\(historyOrders.count)")
+            return
+        }
+        print("📝 loadReviews for restaurantId=\(restaurantId)")
         do {
             reviews = try await service.fetchReviews(restaurantId: restaurantId)
+            if reviews.isEmpty {
+                statusMessage = "目前沒有買家評論"
+            }
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -471,6 +511,8 @@ final class RestaurantAdminStore: ObservableObject {
 
     private func startDemoOrders() {
         demoTimer?.invalidate()
+        // 若不在 Demo 模式或已切換到真人服務，避免啟動 demo 訂單
+        guard DemoConfig.isDemoAccount else { return }
         demoTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             Task { @MainActor in
@@ -501,6 +543,21 @@ final class RestaurantAdminStore: ObservableObject {
             }
         }
     }
+
+    nonisolated func stopDemoOrders() {
+        Task { @MainActor [weak self] in
+            self?.demoTimer?.invalidate()
+            self?.demoTimer = nil
+        }
+    }
+
+    var restaurantIdentifier: String {
+        resolvedRestaurantId ?? ""
+    }
+
+    var resolvedRestaurantId: String? {
+        restaurantId ?? activeOrders.first?.restaurantId ?? historyOrders.first?.restaurantId
+    }
 }
 
 // MARK: - Views
@@ -513,8 +570,9 @@ struct RestaurantModule: View {
 
     init(onLogout: @escaping () -> Void = {}, onSwitchRole: @escaping () -> Void = {}) {
         let tokenProvider = { UserDefaults.standard.string(forKey: "auth_token") }
-        let service: RestaurantServiceProtocol = DemoConfig.isEnabled ? DemoRestaurantService() : NetworkRestaurantService(tokenProvider: tokenProvider)
-        _store = StateObject(wrappedValue: RestaurantAdminStore(service: service))
+        let envRestaurantId = ProcessInfo.processInfo.environment["RESTAURANT_ID"] ?? UserDefaults.standard.string(forKey: "restaurant_id")
+        let service: RestaurantServiceProtocol = DemoConfig.isDemoAccount ? DemoRestaurantService() : NetworkRestaurantService(tokenProvider: tokenProvider, restaurantId: envRestaurantId)
+        _store = StateObject(wrappedValue: RestaurantAdminStore(service: service, restaurantId: envRestaurantId))
         self.onLogout = onLogout
         self.onSwitchRole = onSwitchRole
     }
@@ -538,6 +596,15 @@ struct RestaurantModule: View {
                 .tag(RestaurantAdminTab.settings)
         }
         .environmentObject(store)
+        .onAppear {
+            // 離開 demo 模式時確保不會殘留假訂單計時器
+            if !DemoConfig.isDemoAccount {
+                Task { @MainActor in store.stopDemoOrders() }
+            }
+        }
+        .onDisappear {
+            Task { @MainActor in store.stopDemoOrders() }
+        }
     }
 }
 
@@ -882,8 +949,8 @@ struct RestaurantMenuManagerView: View {
                         Button {
                             editingItem = item
                         } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 6) {
                                     Text(item.name)
                                         .font(.headline)
                                     Text(item.description)
@@ -891,8 +958,8 @@ struct RestaurantMenuManagerView: View {
                                         .foregroundStyle(.secondary)
                                     Text("價格：$\(item.price)")
                                         .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
                                 }
-                                Spacer()
                                 VStack(alignment: .trailing, spacing: 6) {
                                     Text(item.isAvailable ? "上架中" : "已下架")
                                         .font(.caption.weight(.bold))
@@ -904,8 +971,16 @@ struct RestaurantMenuManagerView: View {
                                     }
                                 }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 16)
+                            .contentShape(Rectangle())
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                         .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                        .listRowSeparator(.hidden)
                     }
                 }
             }
@@ -922,9 +997,17 @@ struct RestaurantMenuManagerView: View {
             .task { await store.loadMenu() }
             .refreshable { await store.loadMenu() }
             .sheet(item: $editingItem) { item in
-                RestaurantMenuEditor(item: item) { updated in
-                    await store.saveMenuItem(updated)
-                }
+                RestaurantMenuEditor(
+                    item: item,
+                    onSave: { updated in
+                        await store.saveMenuItem(updated)
+                        await MainActor.run { editingItem = nil }
+                    },
+                    onDelete: { id in
+                        await store.deleteMenuItem(id: id)
+                        await MainActor.run { editingItem = nil }
+                    }
+                )
             }
         }
     }
@@ -950,7 +1033,9 @@ struct RestaurantMenuManagerView: View {
 struct RestaurantMenuEditor: View {
     @State var item: RestaurantMenuItemAdmin
     var onSave: (RestaurantMenuItemAdmin) async -> Void
+    var onDelete: ((String) async -> Void)?
     @Environment(\.dismiss) private var dismiss
+    @State private var showDeleteConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -958,7 +1043,8 @@ struct RestaurantMenuEditor: View {
                 Section("基本資訊") {
                     TextField("名稱", text: $item.name)
                     TextField("描述", text: $item.description, axis: .vertical)
-                    Stepper("價格 $\(item.price)", value: $item.price, in: 0...5000, step: 5)
+                    TextField("價格", value: $item.price, format: .number)
+                        .keyboardType(.numberPad)
                     Toggle("上架", isOn: $item.isAvailable)
                     Stepper("排序 \(item.sortOrder ?? 0)", value: Binding(get: { item.sortOrder ?? 0 }, set: { item.sortOrder = $0 }), in: 0...999)
                 }
@@ -967,6 +1053,15 @@ struct RestaurantMenuEditor: View {
                     TagsEditor(title: "辣度", items: $item.spicinessOptions, placeholder: "辣度")
                     TagsEditor(title: "過敏原", items: $item.allergens, placeholder: "過敏原")
                     TagsEditor(title: "標籤", items: $item.tags, placeholder: "標籤")
+                }
+                if !item.isNew, let onDelete {
+                    Section {
+                        Button(role: .destructive) {
+                            showDeleteConfirm = true
+                        } label: {
+                            Label("刪除餐點", systemImage: "trash")
+                        }
+                    }
                 }
             }
             .navigationTitle(item.isNew ? "新增餐點" : "編輯餐點")
@@ -983,6 +1078,21 @@ struct RestaurantMenuEditor: View {
                     }
                     .disabled(item.name.isEmpty)
                 }
+            }
+            .confirmationDialog(
+                "確定要刪除這個餐點嗎？此操作無法復原。",
+                isPresented: $showDeleteConfirm,
+                titleVisibility: .visible
+            ) {
+                if let onDelete {
+                    Button("刪除", role: .destructive) {
+                        Task {
+                            await onDelete(item.id)
+                            dismiss()
+                        }
+                    }
+                }
+                Button("取消", role: .cancel) { showDeleteConfirm = false }
             }
         }
     }
@@ -1145,7 +1255,13 @@ struct RestaurantSettingsView: View {
 
                 Section("餐廳評價") {
                     Button {
-                        Task { await store.loadReviews(); showReviews = true }
+                        Task {
+                            if store.reviews.isEmpty {
+                                await store.loadOrders()
+                            }
+                            await store.loadReviews()
+                            showReviews = true
+                        }
                     } label: {
                         Label("查看買家評論", systemImage: "star.bubble")
                     }
@@ -1160,7 +1276,12 @@ struct RestaurantSettingsView: View {
             }
             .navigationTitle("設定")
             .sheet(isPresented: $showReviews) {
-                RestaurantReviewsView(restaurantId: store.activeOrders.first?.restaurantId ?? "rest-001", restaurantName: "餐廳", rating: nil, initialReviews: store.reviews)
+                RestaurantReviewsView(
+                    restaurantId: store.restaurantIdentifier,
+                    restaurantName: "餐廳",
+                    rating: nil,
+                    initialReviews: store.reviews
+                )
             }
         }
     }
@@ -1173,7 +1294,7 @@ private extension RestaurantAdminAPI.OrderDTO {
         RestaurantOrderAdmin(
             id: id,
             code: code,
-            restaurantId: nil,
+            restaurantId: restaurantId,
             status: RestaurantOrderStatusAdmin(apiValue: status),
             placedAt: placedAt,
             etaMinutes: etaMinutes,

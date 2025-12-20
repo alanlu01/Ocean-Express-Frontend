@@ -249,7 +249,7 @@ fileprivate struct RestaurantMenuView: View {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
-        if DemoConfig.isEnabled { return }
+        if DemoConfig.isDemoAccount { return }
         do {
             print("🚀 RestaurantMenuView: fetching menu for \(restaurantId)")
             let data = try await RestaurantAPI.fetchMenu(restaurantId: restaurantId)
@@ -683,11 +683,15 @@ final class CustomerOrderStore: ObservableObject {
 
     func refresh(token: String?) async {
         do {
+            let existingRatings: [String: OrderAPI.OrderRating] = Dictionary(uniqueKeysWithValues: (activeOrders + historyOrders).compactMap { order in
+                guard let rating = order.rating else { return nil }
+                return (order.id, rating)
+            })
             let actives = try await OrderAPI.fetchOrders(status: "active", token: token)
             let histories = try await OrderAPI.fetchOrders(status: "history", token: token)
             await MainActor.run {
-                activeOrders = actives.map { $0.toCustomerOrder(isHistory: false) }
-                historyOrders = histories.map { $0.toCustomerOrder(isHistory: true) }
+                activeOrders = actives.map { $0.toCustomerOrder(isHistory: false, existingRating: existingRatings[$0.id]) }
+                historyOrders = histories.map { $0.toCustomerOrder(isHistory: true, existingRating: existingRatings[$0.id]) }
                 notifyStatusChanges(with: activeOrders + historyOrders)
             }
         } catch {
@@ -907,9 +911,19 @@ struct OrderStatusRow: View {
 }
 
 private extension OrderAPI.OrderSummary {
-    func toCustomerOrder(isHistory: Bool) -> CustomerOrder {
+    func toCustomerOrder(isHistory: Bool, existingRating: OrderAPI.OrderRating? = nil) -> CustomerOrder {
         let date = placedAt ?? Date()
         let statusEnum = CustomerOrderStatus(rawValue: status) ?? .preparing
-        return CustomerOrder(id: id, title: restaurantName, location: "", status: statusEnum, etaMinutes: etaMinutes, placedAt: date, totalAmount: totalAmount, deliveryFee: nil, rating: nil)
+        return CustomerOrder(
+            id: id,
+            title: restaurantName,
+            location: "",
+            status: statusEnum,
+            etaMinutes: etaMinutes,
+            placedAt: date,
+            totalAmount: totalAmount,
+            deliveryFee: nil,
+            rating: rating ?? existingRating
+        )
     }
 }

@@ -27,6 +27,32 @@ enum OrderStatus: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// 後端狀態字串（snake_case），用來和 API 對齊
+    var serverValue: String {
+        switch self {
+        case .available: return "available"
+        case .assigned: return "assigned"
+        case .enRouteToPickup: return "en_route_to_pickup"
+        case .pickedUp: return "picked_up"
+        case .delivering: return "delivering"
+        case .delivered: return "delivered"
+        case .cancelled: return "cancelled"
+        }
+    }
+
+    init?(serverValue: String) {
+        switch serverValue {
+        case "available": self = .available
+        case "assigned": self = .assigned
+        case "en_route_to_pickup": self = .enRouteToPickup
+        case "picked_up": self = .pickedUp
+        case "delivering": self = .delivering
+        case "delivered": self = .delivered
+        case "cancelled": self = .cancelled
+        default: return nil
+        }
+    }
+
     var title: String {
         switch self {
         case .available: return "可接單"
@@ -108,6 +134,7 @@ struct Place: Hashable {
 struct Customer: Hashable {
     var displayName: String
     var phone: String
+    var email: String? = nil
 }
 
 struct Order: Identifiable, Hashable {
@@ -131,6 +158,14 @@ struct Order: Identifiable, Hashable {
     /// 進行中任務：已接單後才算 active（排除 available / delivered / cancelled）
     var isActive: Bool {
         status != .available && status != .delivered && status != .cancelled
+    }
+
+    var canAdvance: Bool {
+        status != .delivered && status != .cancelled
+    }
+
+    var canMarkCancelled: Bool {
+        status != .delivered
     }
 
     static func == (lhs: Order, rhs: Order) -> Bool { lhs.id == rhs.id }
@@ -256,6 +291,10 @@ final class MockOrderService: OrderServiceProtocol {
     func reportIncident(order: Order, note: String) async throws {
         print("Mock incident for order \(order.id): \(note)")
     }
+
+    func updateLocation(orderId: String, coordinate: CLLocationCoordinate2D) async throws {
+        // mock 不上傳
+    }
 }
 
 
@@ -314,6 +353,7 @@ protocol OrderServiceProtocol {
     func accept(order: Order) async throws -> Order
     func updateStatus(order: Order, to status: OrderStatus) async throws -> Order
     func reportIncident(order: Order, note: String) async throws
+    func updateLocation(orderId: String, coordinate: CLLocationCoordinate2D) async throws
 }
 
 @MainActor
@@ -340,6 +380,9 @@ final class NetworkOrderService: OrderServiceProtocol {
                         continuation.yield(list.map { $0.toOrder() })
                     } catch {
                         print("Available orders fetch error:", error)
+                        await MainActor.run {
+                            NotificationManager.shared.notify(title: "外送任務錯誤", body: error.localizedDescription)
+                        }
                     }
                     try? await Task.sleep(for: pollInterval)
                 }
@@ -350,14 +393,28 @@ final class NetworkOrderService: OrderServiceProtocol {
 
     func fetchActiveTasks() async throws -> [Order] {
         guard let token = tokenProvider(), !token.isEmpty else { return [] }
-        let list = try await DelivererAPI.fetchActive(token: token)
-        return list.map { $0.toOrder() }
+        do {
+            let list = try await DelivererAPI.fetchActive(token: token)
+            return list.map { $0.toOrder() }
+        } catch {
+            await MainActor.run {
+                NotificationManager.shared.notify(title: "任務同步失敗", body: error.localizedDescription)
+            }
+            throw error
+        }
     }
 
     func fetchHistoryTasks() async throws -> [Order] {
         guard let token = tokenProvider(), !token.isEmpty else { return [] }
-        let list = try await DelivererAPI.fetchHistory(token: token)
-        return list.map { $0.toOrder() }
+        do {
+            let list = try await DelivererAPI.fetchHistory(token: token)
+            return list.map { $0.toOrder() }
+        } catch {
+            await MainActor.run {
+                NotificationManager.shared.notify(title: "歷史任務同步失敗", body: error.localizedDescription)
+            }
+            throw error
+        }
     }
 
     func accept(order: Order) async throws -> Order {
@@ -372,7 +429,7 @@ final class NetworkOrderService: OrderServiceProtocol {
 
     func updateStatus(order: Order, to status: OrderStatus) async throws -> Order {
         let token = tokenProvider()
-        if let task = try await DelivererAPI.updateStatus(id: order.id, status: status.rawValue, token: token) {
+        if let task = try await DelivererAPI.updateStatus(id: order.id, status: status.serverValue, token: token) {
             return task.toOrder(overrides: order)
         }
         var updated = order
@@ -383,6 +440,11 @@ final class NetworkOrderService: OrderServiceProtocol {
     func reportIncident(order: Order, note: String) async throws {
         let token = tokenProvider()
         try await DelivererAPI.reportIncident(id: order.id, note: note, token: token)
+    }
+
+    func updateLocation(orderId: String, coordinate: CLLocationCoordinate2D) async throws {
+        let token = tokenProvider()
+        try await DelivererAPI.updateLocation(id: orderId, lat: coordinate.latitude, lng: coordinate.longitude, token: token)
     }
 }
 
@@ -395,11 +457,11 @@ extension DelivererAPI.Stop {
     }
 
     func toPlace() -> Place {
-        Place(name: name, coordinate: coordinate)
+        Place(name: name ?? "未知地點", coordinate: coordinate)
     }
 
     func toCustomer() -> Customer {
-        Customer(displayName: name, phone: phone ?? "")
+        Customer(displayName: name ?? "顧客", phone: phone ?? "", email: email)
     }
 }
 
@@ -415,7 +477,7 @@ extension DelivererAPI.Task {
             dropoff: (dropoff ?? customer)?.toPlace() ?? Place(name: "送達地點", coordinate: defaultCoordinate),
             notes: notes ?? "",
             canPickup: canPickup ?? true,
-            status: OrderStatus(rawValue: status ?? "") ?? .available
+            status: OrderStatus(serverValue: status ?? "") ?? .available
         )
         base.id = id ?? existing?.id ?? UUID().uuidString
         base.code = code ?? base.code
@@ -458,6 +520,7 @@ final class AppState: ObservableObject {
     private let service: OrderServiceProtocol
     private var streamTask: Task<Void, Never>? = nil
     private var lastAvailableOrderIDs: Set<String> = []
+    private var lastLocationUpdate: Date?
 
     init(service: any OrderServiceProtocol) {
         self.service = service
@@ -478,6 +541,7 @@ final class AppState: ObservableObject {
                 let newlyAdded = available.filter { !self.lastAvailableOrderIDs.contains($0.id) }
                 self.lastAvailableOrderIDs = currentIDs
                 await MainActor.run {
+                    print("🚚 available orders count: \(available.count)")
                     self.availableOrders = available
                     newlyAdded.forEach { order in
                         if self.enableNewOrderNotifications {
@@ -538,6 +602,23 @@ final class AppState: ObservableObject {
             dailyEarnings = AppState.computeEarnings(from: histories)
         } catch {
             print("Fetch tasks error:", error)
+            await MainActor.run {
+                NotificationManager.shared.notify(title: "同步任務失敗", body: error.localizedDescription)
+            }
+        }
+    }
+
+    func updateLocation(_ location: CLLocationCoordinate2D) async {
+        guard !activeTasks.isEmpty else { return }
+        let now = Date()
+        if let last = lastLocationUpdate, now.timeIntervalSince(last) < 10 { return }
+        lastLocationUpdate = now
+        for order in activeTasks where order.isActive {
+            do {
+                try await service.updateLocation(orderId: order.id, coordinate: location)
+            } catch {
+                print("Update location failed for order \(order.id): \(error)")
+            }
         }
     }
 
@@ -568,7 +649,9 @@ final class AppState: ObservableObject {
     var onSwitchRole: () -> Void
 
     init(onLogout: @escaping () -> Void = {}, onSwitchRole: @escaping () -> Void = {}) {
-        let service: OrderServiceProtocol = MockOrderService()
+        let tokenProvider = { UserDefaults.standard.string(forKey: "auth_token") }
+        // customer 也允許使用外送員介面：非 demo 一律直連後端，demo 才用本地假資料
+        let service: OrderServiceProtocol = DemoConfig.isDemoAccount ? MockOrderService() : NetworkOrderService(tokenProvider: tokenProvider)
         _appState = StateObject(wrappedValue: AppState(service: service))
         _loc = StateObject(wrappedValue: LocationManager())
         self.onLogout = onLogout
@@ -604,6 +687,9 @@ struct RootView: View {
         .onAppear {
             loc.request()
             NotificationManager.shared.requestAuthorization()
+        }
+        .onReceive(loc.$userLocation.compactMap { $0 }) { location in
+            Task { await app.updateLocation(location.coordinate) }
         }
         .task {
             await app.refreshTasks()
@@ -840,6 +926,17 @@ struct OrderDetailView: View {
         UIApplication.shared.open(url)
     }
 
+    /// 直接跳到 Apple Maps 導航（取餐/送達）
+    private func openInAppleMaps(goToPickup: Bool) {
+        let target = goToPickup ? liveOrder.merchant.coordinate : liveOrder.dropoff.coordinate
+        let placemark = MKPlacemark(coordinate: target)
+        let item = MKMapItem(placemark: placemark)
+        item.name = goToPickup ? "取餐：\(liveOrder.merchant.name)" : "送達：\(liveOrder.dropoff.name)"
+        item.openInMaps(launchOptions: [
+            MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
+        ])
+    }
+
     init(order: Order) {
         self.order = order
         _region = State(initialValue: MKCoordinateRegion(center: order.merchant.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)))
@@ -870,6 +967,26 @@ struct OrderDetailView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .padding(.horizontal)
             .padding(.top)
+            .overlay(alignment: .bottomTrailing) {
+                Menu {
+                    Button {
+                        openInAppleMaps(goToPickup: true)
+                    } label: {
+                        Label("導航到取餐點", systemImage: "bag.fill")
+                    }
+                    Button {
+                        openInAppleMaps(goToPickup: false)
+                    } label: {
+                        Label("導航到送達地點", systemImage: "mappin.and.ellipse")
+                    }
+                } label: {
+                    Label("在地圖開啟", systemImage: "map")
+                        .padding(8)
+                        .background(.thinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .padding(10)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 12) {
                 InfoRow(title: "顧客", value: "\(liveOrder.customer.displayName)  (☎︎ \(liveOrder.customer.phone))")
@@ -1341,9 +1458,20 @@ struct DelivererSettingsView: View {
 @MainActor
 final class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
+    private let defaults = UserDefaults.standard
+    private let tokenKey = "apns_device_token"
+    private let uploadedKey = "apns_token_uploaded"
+    private(set) var apnsToken: String? {
+        didSet {
+            if let apnsToken {
+                defaults.set(apnsToken, forKey: tokenKey)
+            }
+        }
+    }
 
     override init() {
         super.init()
+        apnsToken = defaults.string(forKey: tokenKey)
         UNUserNotificationCenter.current().delegate = self
     }
 
@@ -1354,6 +1482,25 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
                 print("Notification auth error: \(error)")
             } else {
                 print("Notification permission granted: \(granted)")
+            }
+        }
+    }
+
+    func updateAPNSToken(_ token: String) {
+        apnsToken = token
+        defaults.set(false, forKey: uploadedKey)
+    }
+
+    func registerDeviceIfNeeded(userId: String?, role: String?, restaurantId: String?, authToken: String?) {
+        guard let token = apnsToken else { return }
+        let alreadyUploaded = defaults.bool(forKey: uploadedKey)
+        Task {
+            do {
+                try await PushAPI.registerDevice(token: token, userId: userId, role: role, restaurantId: restaurantId, authToken: authToken)
+                defaults.set(true, forKey: uploadedKey)
+            } catch {
+                print("Push register failed:", error)
+                defaults.set(false, forKey: uploadedKey)
             }
         }
     }
@@ -1380,6 +1527,19 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
         let request = UNNotificationRequest(
             identifier: "status-\(order.id)-\(order.status.rawValue)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    func notify(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "generic-\(UUID().uuidString)",
             content: content,
             trigger: nil
         )
