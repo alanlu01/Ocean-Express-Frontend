@@ -177,8 +177,8 @@ struct LoginView: View {
     }
 
     private func attemptSwitchRole(to newRole: AuthRole) {
-        // 買家/外送員可互換；餐廳介面需餐廳帳號或 Demo
-        let allowedRestaurant = DemoConfig.isEnabled || serverRole == .restaurant
+        // 買家/外送員可互換；餐廳介面需餐廳帳號
+        let allowedRestaurant = serverRole == .restaurant
         if newRole == .restaurant && !allowedRestaurant {
             alertMessage = "此帳號無餐廳權限，無法進入餐廳介面。"
             showAlert = true
@@ -196,34 +196,14 @@ struct LoginView: View {
 
         isLoading = true
 
-        let isDemoLogin = email.lowercased() == "demo" && password == "demo"
-
-        if isDemoLogin {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                alertMessage = "⚠️ Demo 模式啟用"
-                showAlert = true
-                UserDefaults.standard.set("demo-token", forKey: "auth_token")
-                UserDefaults.standard.set(role.rawValue, forKey: "auth_role")
-                UserDefaults.standard.set("demo-user", forKey: "auth_user_id")
-                DemoConfig.setDemo(enabled: true)
-                serverRole = role
-                NotificationManager.shared.enablePushForSession()
-                isLoading = false
-                withAnimation { isLoggedIn = true }
-            }
-            return
-        } else {
-            DemoConfig.setDemo(enabled: false)
-            serverRole = nil
-            UserDefaults.standard.removeObject(forKey: "auth_role")
-            UserDefaults.standard.removeObject(forKey: "auth_user_id")
-            UserDefaults.standard.removeObject(forKey: "restaurant_id")
-        }
+        serverRole = nil
+        UserDefaults.standard.removeObject(forKey: "auth_role")
+        UserDefaults.standard.removeObject(forKey: "auth_user_id")
+        UserDefaults.standard.removeObject(forKey: "restaurant_id")
 
         Task {
             do {
                 let result = try await AuthAPI.login(email: email, password: password)
-                DemoConfig.setDemo(enabled: false)
                 let backendRole = AuthRole(rawValue: result.user.role) ?? .customer
                 serverRole = backendRole
                 UserDefaults.standard.set(result.token, forKey: "auth_token")

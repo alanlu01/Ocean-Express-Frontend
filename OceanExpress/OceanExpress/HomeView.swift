@@ -42,7 +42,7 @@ struct HomeView: View {
 }
 
 struct RestaurantListView: View {
-    @State private var restaurants: [RestaurantListItem] = Self.sample
+    @State private var restaurants: [RestaurantListItem] = []
     @State private var isLoading = false
 
     var body: some View {
@@ -70,20 +70,13 @@ struct RestaurantListView: View {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
-        if DemoConfig.isEnabled { return } // demo 保留樣本
         do {
             let data = try await RestaurantAPI.fetchRestaurants()
             restaurants = data.map { RestaurantListItem(id: $0.id, name: $0.name, imageURL: URL(string: $0.imageUrl ?? ""), rating: $0.rating) }
         } catch {
-            // 失敗時保留樣本
+            // 無資料時維持空清單
         }
     }
-
-    fileprivate static let sample: [RestaurantListItem] = [
-        .init(id: "rest-001", name: "港灣漢堡", imageURL: URL(string: "https://images.unsplash.com/photo-1550547660-d9450f859349?w=1200&q=80"), rating: 4.6),
-        .init(id: "rest-002", name: "碼頭咖啡", imageURL: URL(string: "https://images.unsplash.com/photo-1504754524776-8f4f37790ca0?w=1200&q=80"), rating: 4.4),
-        .init(id: "rest-003", name: "綠光沙拉碗", imageURL: URL(string: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=1200&q=80"), rating: 4.8)
-    ]
 }
 
 fileprivate struct RestaurantListItem: Identifiable, Hashable {
@@ -249,7 +242,6 @@ fileprivate struct RestaurantMenuView: View {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
-        if DemoConfig.isDemoAccount { return }
         do {
             print("🚀 RestaurantMenuView: fetching menu for \(restaurantId)")
             let data = try await RestaurantAPI.fetchMenu(restaurantId: restaurantId)
@@ -265,13 +257,6 @@ fileprivate struct RestaurantMenuView: View {
         guard !isLoadingReviews else { return }
         isLoadingReviews = true
         defer { isLoadingReviews = false }
-        if DemoConfig.isEnabled {
-            reviews = [
-                RestaurantAPI.Review(userName: "示範用戶A", rating: 5, comment: "餐點好吃，送餐準時！", createdAt: Date().addingTimeInterval(-86400)),
-                RestaurantAPI.Review(userName: "示範用戶B", rating: 4, comment: "份量足，值得再點。", createdAt: Date().addingTimeInterval(-3600 * 5))
-            ]
-            return
-        }
         do {
             let data = try await RestaurantAPI.fetchReviews(restaurantId: restaurantId)
             reviews = data
@@ -378,7 +363,7 @@ struct DeliverySetupView: View {
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
-    @State private var locationCategories: [DeliveryLocationCategory] = DeliveryCatalog.demoCategories
+    @State private var locationCategories: [DeliveryLocationCategory] = []
     @State private var isLoadingLocations = false
     private let timeRange: ClosedRange<Date> = {
         let now = Date()
@@ -462,21 +447,11 @@ struct DeliverySetupView: View {
     private func submitOrder() {
         guard !isSubmitting else { return }
         isSubmitting = true
-        let isDemo = DemoConfig.isEnabled
         let eta = Int(max(10, deliveryTime.timeIntervalSinceNow / 60))
         let noteText = notes
 
         Task {
             defer { isSubmitting = false }
-            if isDemo {
-                let orderTitle = cart.items.first?.restaurantName ?? "新訂單"
-                orderStore.addDemoOrder(title: orderTitle, location: selectedLocation.name, etaMinutes: eta)
-                cart.clear()
-                selectedTab = .status
-                dismiss()
-                return
-            }
-
             do {
                 guard let restaurantId = cart.items.first?.restaurantId ?? cart.currentRestaurantId else {
                     throw APIError(message: "缺少餐廳資訊")
@@ -522,7 +497,6 @@ struct DeliverySetupView: View {
         if let preset = locationCategories.flatMap({ $0.destinations }).first(where: { $0.name == defaultDeliveryLocationName }) {
             selectedLocation = preset
         }
-        guard !DemoConfig.isEnabled else { return }
         guard !isLoadingLocations else { return }
         isLoadingLocations = true
         defer { isLoadingLocations = false }
@@ -536,15 +510,23 @@ struct DeliverySetupView: View {
             }
             if !mapped.isEmpty {
                 locationCategories = mapped
+            } else {
+                locationCategories = fallbackCategories()
             }
         } catch {
-            // ignore, fallback to demo
+            locationCategories = fallbackCategories()
         }
         if let preset = locationCategories.flatMap({ $0.destinations }).first(where: { $0.name == defaultDeliveryLocationName }) {
             selectedLocation = preset
         } else if let first = locationCategories.first?.destinations.first {
             selectedLocation = first
         }
+    }
+
+    private func fallbackCategories() -> [DeliveryLocationCategory] {
+        let name = defaultDeliveryLocationName.isEmpty ? DeliveryCatalog.defaultDestination.name : defaultDeliveryLocationName
+        let dest = DeliveryDestination(name: name, latitude: nil, longitude: nil)
+        return [DeliveryLocationCategory(name: "預設地點", destinations: [dest])]
     }
 }
 
@@ -614,6 +596,8 @@ struct SettingsView: View {
     var onSwitchRole: () -> Void
     @AppStorage("customer_push_enabled") private var pushEnabled = true
     @AppStorage("default_delivery_location_name") private var defaultDeliveryLocationName: String = DeliveryCatalog.defaultDestination.name
+    @State private var locationCategories: [DeliveryLocationCategory] = []
+    @State private var isLoadingLocations = false
 
     var body: some View {
         NavigationStack {
@@ -643,14 +627,20 @@ struct SettingsView: View {
                 }
 
                 Section("預設外送地點") {
-                    Picker("預設地點", selection: $defaultDeliveryLocationName) {
-                        ForEach(DeliveryCatalog.demoCategories.flatMap(\.destinations)) { loc in
-                            Text(loc.name).tag(loc.name)
+                    if allLocations.isEmpty {
+                        Text("尚未載入地點清單，請在下單時選擇一次即可記錄。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker("預設地點", selection: $defaultDeliveryLocationName) {
+                            ForEach(allLocations) { loc in
+                                Text(loc.name).tag(loc.name)
+                            }
                         }
+                        Text("此設定會在下單時自動帶入，可隨時於下單頁更改。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
-                    Text("此設定會在下單時自動帶入，可隨時於下單頁更改。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section("關於") {
@@ -663,12 +653,48 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("設定")
+            .task { await loadLocationPresets() }
         }
     }
 
     private func requestNotificationPermission() {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+    }
+
+    private var allLocations: [DeliveryDestination] {
+        locationCategories.flatMap(\.destinations)
+    }
+
+    private func loadLocationPresets() async {
+        guard !isLoadingLocations else { return }
+        isLoadingLocations = true
+        defer { isLoadingLocations = false }
+        do {
+            let categories = try await DeliveryLocationAPI.fetchCategories()
+            let mapped: [DeliveryLocationCategory] = categories.map { cat in
+                DeliveryLocationCategory(
+                    name: cat.category,
+                    destinations: cat.items.map { DeliveryDestination(name: $0.name, latitude: $0.lat, longitude: $0.lng) }
+                )
+            }
+            locationCategories = mapped
+            if let matched = allLocations.first(where: { $0.name == defaultDeliveryLocationName }) {
+                defaultDeliveryLocationName = matched.name
+            } else if let first = allLocations.first {
+                defaultDeliveryLocationName = first.name
+            } else {
+                locationCategories = fallbackCategories()
+            }
+        } catch {
+            locationCategories = fallbackCategories()
+        }
+    }
+
+    private func fallbackCategories() -> [DeliveryLocationCategory] {
+        let name = defaultDeliveryLocationName.isEmpty ? DeliveryCatalog.defaultDestination.name : defaultDeliveryLocationName
+        let dest = DeliveryDestination(name: name, latitude: nil, longitude: nil)
+        return [DeliveryLocationCategory(name: "預設地點", destinations: [dest])]
     }
 }
 
@@ -698,51 +724,6 @@ final class CustomerOrderStore: ObservableObject {
         } catch {
             print("⚠️ refresh orders failed:", error)
         }
-    }
-
-    func addDemoOrder(title: String, location: String, etaMinutes: Int) {
-        let order = CustomerOrder(id: UUID().uuidString, title: title, location: location, status: .preparing, etaMinutes: etaMinutes, placedAt: Date(), totalAmount: nil, deliveryFee: nil, rating: nil)
-        activeOrders.append(order)
-        lastStatusById[order.id] = order.status
-        // 模擬狀態更新：10 秒後配送中，再 10 秒後已送達
-        scheduleLocalNotification(body: "\(title) 訂單已建立，準備中")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
-            guard let self else { return }
-            self.update(orderID: order.id, to: .delivering)
-            self.scheduleLocalNotification(body: "\(title) 已開始配送")
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
-            guard let self else { return }
-            self.complete(orderID: order.id)
-            self.scheduleLocalNotification(body: "\(title) 已送達，感謝使用")
-        }
-    }
-
-    private func update(orderID: String, to status: CustomerOrderStatus) {
-        guard let idx = activeOrders.firstIndex(where: { $0.id == orderID }) else { return }
-        activeOrders[idx].status = status
-        notifyStatusChanges(with: activeOrders + historyOrders)
-    }
-
-    private func complete(orderID: String) {
-        guard let idx = activeOrders.firstIndex(where: { $0.id == orderID }) else { return }
-        var order = activeOrders.remove(at: idx)
-        order.status = .delivered
-        historyOrders.insert(order, at: 0)
-        notifyStatusChanges(with: activeOrders + historyOrders)
-    }
-
-    private func scheduleLocalNotification(body: String) {
-        guard NotificationManager.shared.isPushEnabled else { return }
-        let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
-        let content = UNMutableNotificationContent()
-        content.title = "OceanExpress"
-        content.body = body
-        content.sound = .default
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.5, repeats: false)
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: trigger)
-        center.add(request, withCompletionHandler: nil)
     }
 
     private func notifyStatusChanges(with orders: [CustomerOrder]) {

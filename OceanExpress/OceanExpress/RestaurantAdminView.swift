@@ -213,145 +213,6 @@ final class NetworkRestaurantService: RestaurantServiceProtocol {
     }
 }
 
-final class DemoRestaurantService: RestaurantServiceProtocol {
-    private var activeOrders: [RestaurantOrderAdmin] = [
-        RestaurantOrderAdmin(
-            id: "ord-201",
-            code: "R-201",
-            restaurantId: "rest-001",
-            status: .assigned,
-            placedAt: Date().addingTimeInterval(-1800),
-            etaMinutes: 18,
-            totalAmount: 520,
-            deliveryFee: 20,
-            customerName: "林小姐",
-            customerPhone: "0912-000-001",
-            items: [
-                .init(id: "menu-001", name: "港灣漢堡", size: "中份", spiciness: "小辣", quantity: 2, price: 180),
-                .init(id: "menu-002", name: "薯條", size: "單份", spiciness: nil, quantity: 1, price: 80)
-            ],
-            notes: "記得多附醬",
-            deliveryLocation: .init(name: "行政大樓", lat: 25.1503, lng: 121.7655),
-            statusHistory: [],
-            riderName: "王外送",
-            riderPhone: "0900-111-222"
-        ),
-        RestaurantOrderAdmin(
-            id: "ord-202",
-            code: "R-202",
-            restaurantId: "rest-001",
-            status: .en_route_to_pickup,
-            placedAt: Date().addingTimeInterval(-900),
-            etaMinutes: 10,
-            totalAmount: 320,
-            deliveryFee: 20,
-            customerName: "張同學",
-            customerPhone: "0912-000-002",
-            items: [
-                .init(id: "menu-003", name: "綠光沙拉碗", size: "單份", spiciness: "不辣", quantity: 1, price: 150),
-                .init(id: "menu-004", name: "奶茶", size: "大杯", spiciness: nil, quantity: 1, price: 70)
-            ],
-            notes: "請放門口",
-            deliveryLocation: .init(name: "圖書館", lat: 25.1501, lng: 121.7753),
-            statusHistory: [],
-            riderName: nil,
-            riderPhone: nil
-        )
-    ]
-
-    private var historyOrders: [RestaurantOrderAdmin] = [
-        RestaurantOrderAdmin(
-            id: "ord-199",
-            code: "R-199",
-            restaurantId: "rest-001",
-            status: .delivered,
-            placedAt: Date().addingTimeInterval(-7200),
-            etaMinutes: 0,
-            totalAmount: 680,
-            deliveryFee: 20,
-            customerName: "黃先生",
-            customerPhone: "0912-000-099",
-            items: [
-                .init(id: "menu-005", name: "炙烤鮭魚", size: "大份", spiciness: "不辣", quantity: 2, price: 188)
-            ],
-            notes: "提前十分鐘通知",
-            deliveryLocation: .init(name: "第二餐廳", lat: 25.1485, lng: 121.7791),
-            statusHistory: [],
-            riderName: "陳外送",
-            riderPhone: "0900-999-888"
-        )
-    ]
-
-    private var menu: [RestaurantMenuItemAdmin] = [
-        .init(id: "menu-001", name: "港灣漢堡", description: "炙烤牛肉、生菜番茄", price: 180, sizes: ["中份", "大份"], spicinessOptions: ["不辣", "小辣"], allergens: ["牛肉", "麩質"], tags: ["主餐", "人氣"], imageUrl: nil, isAvailable: true, sortOrder: 1),
-        .init(id: "menu-002", name: "檸檬蜜茶", description: "手工現泡", price: 70, sizes: ["中杯", "大杯"], spicinessOptions: ["不辣"], allergens: [], tags: ["飲品"], imageUrl: nil, isAvailable: true, sortOrder: 2),
-        .init(id: "menu-003", name: "海港薯條", description: "酥脆現炸", price: 80, sizes: ["單份"], spicinessOptions: ["不辣"], allergens: [], tags: ["點心"], imageUrl: nil, isAvailable: true, sortOrder: 3)
-    ]
-
-    func fetchOrders(status: String) async throws -> [RestaurantOrderAdmin] {
-        status == "history" ? historyOrders : activeOrders
-    }
-
-    func updateOrderStatus(id: String, status: RestaurantOrderStatusAdmin) async throws -> RestaurantOrderAdmin {
-        if let idx = activeOrders.firstIndex(where: { $0.id == id }) {
-            activeOrders[idx].status = status
-            if status.isHistory {
-                let moved = activeOrders.remove(at: idx)
-                var updated = moved
-                updated.status = status
-                historyOrders.append(updated)
-            }
-            return activeOrders.first(where: { $0.id == id }) ?? historyOrders.last!
-        }
-        if let idx = historyOrders.firstIndex(where: { $0.id == id }) {
-            historyOrders[idx].status = status
-            return historyOrders[idx]
-        }
-        throw APIError(message: "找不到訂單")
-    }
-
-    func fetchMenu() async throws -> [RestaurantMenuItemAdmin] {
-        menu
-    }
-
-    func createMenuItem(_ item: RestaurantMenuItemAdmin) async throws -> RestaurantMenuItemAdmin {
-        var newItem = item
-        newItem.id = "menu-\(Int.random(in: 300...999))"
-        newItem.isNew = false
-        menu.append(newItem)
-        return newItem
-    }
-
-    func updateMenuItem(_ item: RestaurantMenuItemAdmin) async throws -> RestaurantMenuItemAdmin {
-        if let idx = menu.firstIndex(where: { $0.id == item.id }) {
-            var updated = item
-            updated.isNew = false
-            menu[idx] = updated
-            return updated
-        }
-        return try await createMenuItem(item)
-    }
-
-    func deleteMenuItem(id: String) async throws {
-        menu.removeAll { $0.id == id }
-    }
-
-    func fetchReport(range: ReportRange) async throws -> RestaurantReport {
-        let total = (activeOrders + historyOrders).reduce(0) { $0 + ($1.totalAmount ?? 0) }
-        let top: [RestaurantTopItem] = menu.prefix(3).enumerated().map { idx, item in
-            RestaurantTopItem(id: item.id, name: item.name, quantity: 10 - idx * 2, revenue: (10 - idx * 2) * item.price)
-        }
-        return RestaurantReport(range: range.rawValue, totalRevenue: total, orderCount: activeOrders.count + historyOrders.count, topItems: top)
-    }
-
-    func fetchReviews(restaurantId: String) async throws -> [RestaurantAPI.Review] {
-        [
-            RestaurantAPI.Review(userName: "Alice", rating: 5, comment: "餐點好吃，出餐很快！", createdAt: Date().addingTimeInterval(-3600)),
-            RestaurantAPI.Review(userName: "Bob", rating: 4, comment: "份量足，外送包裝完整。", createdAt: Date().addingTimeInterval(-7200))
-        ]
-    }
-}
-
 // MARK: - Store
 
 @MainActor
@@ -368,20 +229,11 @@ final class RestaurantAdminStore: ObservableObject {
     private var restaurantId: String?
     private let defaultRestaurantId: String?
     private var lastOrderCount: Int = 0
-    private var demoTimer: Timer?
-    private var demoCounter: Int = 300
 
     init(service: RestaurantServiceProtocol, restaurantId: String? = nil) {
         self.service = service
         self.restaurantId = restaurantId
         self.defaultRestaurantId = restaurantId
-        if DemoConfig.isDemoAccount {
-            startDemoOrders()
-        }
-    }
-
-    deinit {
-        stopDemoOrders()
     }
 
     func loadOrders() async {
@@ -513,48 +365,6 @@ final class RestaurantAdminStore: ObservableObject {
         }
     }
 
-    private func startDemoOrders() {
-        demoTimer?.invalidate()
-        // 若不在 Demo 模式或已切換到真人服務，避免啟動 demo 訂單
-        guard DemoConfig.isDemoAccount else { return }
-        demoTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            Task { @MainActor in
-                let id = "demo-\(self.demoCounter)"
-                self.demoCounter += 1
-                let newOrder = RestaurantOrderAdmin(
-                    id: id,
-                    code: "D-\(self.demoCounter)",
-                    restaurantId: self.restaurantId ?? "rest-001",
-                    status: .available,
-                    placedAt: Date(),
-                    etaMinutes: Int.random(in: 10...25),
-                    totalAmount: Int.random(in: 180...520),
-                    deliveryFee: 20,
-                    customerName: ["林小姐", "張同學", "王先生", "陳小姐"].randomElement(),
-                    customerPhone: "0912-000-\(String(format: "%03d", Int.random(in: 100...999)))",
-                    items: [
-                        RestaurantOrderItemAdmin(id: "menu-demo", name: "新品快閃 \(self.demoCounter)", size: ["中份", "大份"].randomElement(), spiciness: ["不辣", "小辣"].randomElement(), quantity: 1, price: Int.random(in: 120...260))
-                    ],
-                    notes: ["記得多醬", "請放門口", "提前聯絡"].randomElement(),
-                    deliveryLocation: .init(name: ["行政大樓", "圖書館", "第二餐廳"].randomElement() ?? "校園", lat: nil, lng: nil),
-                    statusHistory: [],
-                    riderName: nil,
-                    riderPhone: nil
-                )
-                self.activeOrders.insert(newOrder, at: 0)
-                self.notifyIfNewOrder(currentActiveCount: self.activeOrders.count)
-            }
-        }
-    }
-
-    nonisolated func stopDemoOrders() {
-        Task { @MainActor [weak self] in
-            self?.demoTimer?.invalidate()
-            self?.demoTimer = nil
-        }
-    }
-
     var restaurantIdentifier: String {
         resolvedRestaurantId ?? ""
     }
@@ -575,7 +385,7 @@ struct RestaurantModule: View {
     init(onLogout: @escaping () -> Void = {}, onSwitchRole: @escaping () -> Void = {}) {
         let tokenProvider = { UserDefaults.standard.string(forKey: "auth_token") }
         let envRestaurantId = ProcessInfo.processInfo.environment["RESTAURANT_ID"] ?? UserDefaults.standard.string(forKey: "restaurant_id")
-        let service: RestaurantServiceProtocol = DemoConfig.isDemoAccount ? DemoRestaurantService() : NetworkRestaurantService(tokenProvider: tokenProvider, restaurantId: envRestaurantId)
+        let service: RestaurantServiceProtocol = NetworkRestaurantService(tokenProvider: tokenProvider, restaurantId: envRestaurantId)
         _store = StateObject(wrappedValue: RestaurantAdminStore(service: service, restaurantId: envRestaurantId))
         self.onLogout = onLogout
         self.onSwitchRole = onSwitchRole
@@ -600,15 +410,6 @@ struct RestaurantModule: View {
                 .tag(RestaurantAdminTab.settings)
         }
         .environmentObject(store)
-        .onAppear {
-            // 離開 demo 模式時確保不會殘留假訂單計時器
-            if !DemoConfig.isDemoAccount {
-                Task { @MainActor in store.stopDemoOrders() }
-            }
-        }
-        .onDisappear {
-            Task { @MainActor in store.stopDemoOrders() }
-        }
     }
 }
 
@@ -644,13 +445,6 @@ struct RestaurantOrdersView: View {
                 .listStyle(.insetGrouped)
             }
             .navigationTitle("訂單管理")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    if DemoConfig.isEnabled {
-                        Text("Demo").font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-            }
             .task { await store.loadOrders() }
             .refreshable { await store.loadOrders() }
             .sheet(item: sheetBinding()) { id in
@@ -1268,13 +1062,6 @@ struct RestaurantSettingsView: View {
                         }
                     } label: {
                         Label("查看買家評論", systemImage: "star.bubble")
-                    }
-                }
-
-                if DemoConfig.isEnabled {
-                    Section {
-                        Label("Demo 模式中，顯示假資料", systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.secondary)
                     }
                 }
             }

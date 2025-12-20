@@ -68,7 +68,6 @@ struct RestaurantReviewsView: View {
         if !initialReviews.isEmpty {
             reviews = initialReviews
         }
-        guard !DemoConfig.isEnabled else { return }
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }

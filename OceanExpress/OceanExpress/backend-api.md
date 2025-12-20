@@ -5,7 +5,6 @@
 
 ## 環境變數
 - `API_BASE_URL`：前端用來組 API 位址（預設 http://localhost:3000）。  
-- `DEMO_MODE`：true/1/yes 強制 demo 模式（前端會用本地假資料）。正式環境請關閉；Deliverer 介面在非 Demo 狀態下會直接呼叫以下配送 API。
 
 ## 通用規範
 - 認證：JWT，受保護路由需 `Authorization: Bearer <token>`.
@@ -27,7 +26,7 @@
   - 401: `{ "message": "invalid credentials", "code": "auth.invalid" }`
 
 - `POST /auth/register`
-  - body: `{ "name": "Demo User", "email": "user@example.com", "password": "...", "phone": "09xxxxxxxx" }`
+  - body: `{ "name": "Sample User", "email": "user@example.com", "password": "...", "phone": "09xxxxxxxx" }`
   - 201: `{ "data": { "id": "u124", "email": "user@example.com", "role": "customer", "phone": "09xxxxxxxx" } }`（也可直接回 token，前後端自行決定）
   - 400: `{ "message": "email exists", "code": "auth.email_taken" }`
 
@@ -141,7 +140,7 @@
     ```json
     { "data": [ { "category": "校園示範", "items": [ { "name": "行政大樓", "lat": 25.1503372, "lng": 121.7655292 } ] } ] }
     ```
-  - 前端 demo 仍會內建一組分類資料，若後端有回傳則覆蓋使用。
+  - 前端會直接使用後端回傳的分類與座標，請確保資料齊全。
 - 推播/即時：建議新增 SSE / WebSocket 端點 `GET /orders/stream`（依 user token 僅推播本人訂單），事件：`order.updated` payload 同 `GET /orders/:id` 的 data；或提供 `/orders/:id/stream` 針對單筆訂單推播狀態變化。
 
 ## 外送員（Deliverer）
@@ -301,7 +300,7 @@
 
 ## 缺少 / 待實作（前端已串接或預留）
 - `POST /orders/:id/rating`：買家送達後評分（分數 1-5 + comment），需儲存並回傳於 `GET /orders/:id`、`GET /orders?status=history`。
-- `GET /delivery/locations`：回傳預設外送地點清單（含 name/lat/lng），支援分類；目前前端內建 demo，若後端提供則覆蓋使用。
+- `GET /delivery/locations`：回傳預設外送地點清單（含 name/lat/lng），支援分類；前端以此為準。
 - `GET /orders/stream`（SSE/WebSocket）：依使用者 token 推播訂單狀態變更，事件 payload 同 `GET /orders/:id`；若無法即時，請提供最小化輪詢 ETag/Last-Modified。
 - 菜單欄位 `allergens`, `tags`, `isAvailable`, `sortOrder` 需在 `GET /restaurants/:id/menu` 回傳；目前不再使用 `drinkOptions` / `drinkOption*`。
 - 下單 payload 需驗證/落庫 `deliveryFee`、`totalAmount`（整數）；建議由後端計算，前端送出的值請比對。

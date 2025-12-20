@@ -297,31 +297,6 @@ struct CustomerOrderDetailView: View {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
-        if DemoConfig.isEnabled {
-            let mock = OrderAPI.OrderDetail(
-                id: order.id,
-                restaurantName: order.title,
-                status: order.status.rawValue,
-                etaMinutes: order.etaMinutes,
-                placedAt: order.placedAt,
-                items: [
-                    .init(name: "招牌便當", size: "大份", spiciness: "小辣", addDrink: true, quantity: 1, price: 120)
-                ],
-                deliveryLocation: .init(name: order.location.isEmpty ? "校園" : order.location, lat: nil, lng: nil),
-                notes: "請在大門口交付",
-                requestedTime: nil,
-                deliveryFee: 20,
-                totalAmount: 140,
-                riderName: "王外送",
-                riderPhone: "0900-000-000",
-                statusHistory: nil,
-                rating: nil
-            )
-            detail = mock
-            orderStore.applyDetail(mock)
-            return
-        }
-
         do {
             let token = UserDefaults.standard.string(forKey: "auth_token")
             let data = try await OrderAPI.fetchOrderDetail(id: order.id, token: token)
@@ -342,10 +317,8 @@ struct CustomerOrderDetailView: View {
         defer { isSubmittingRating = false }
         let rating = OrderAPI.OrderRating(score: ratingScore, comment: ratingComment.isEmpty ? nil : ratingComment)
         do {
-            if !DemoConfig.isEnabled {
-                let token = UserDefaults.standard.string(forKey: "auth_token")
-                try await OrderAPI.submitRating(orderId: order.id, score: ratingScore, comment: rating.comment, token: token)
-            }
+            let token = UserDefaults.standard.string(forKey: "auth_token")
+            try await OrderAPI.submitRating(orderId: order.id, score: ratingScore, comment: rating.comment, token: token)
             detail?.rating = rating
             orderStore.updateRating(orderId: order.id, rating: rating)
         } catch {

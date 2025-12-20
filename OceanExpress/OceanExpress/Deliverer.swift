@@ -180,122 +180,6 @@ extension Order {
         return canPickup ? .ready : .preparing
     }
 }
-@MainActor
-final class MockOrderService: OrderServiceProtocol {
-    private var orders: [Order]
-
-    init() {
-        self.orders = MockOrderService.sampleOrders()
-    }
-
-    private static func sampleOrders() -> [Order] {
-        let merchant1 = Place(
-            name: "小林便當 - 公館店",
-            coordinate: CLLocationCoordinate2D(latitude: 25.0143, longitude: 121.5323)
-        )
-        let drop1 = Place(
-            name: "台大電機系館",
-            coordinate: CLLocationCoordinate2D(latitude: 25.0172, longitude: 121.5395)
-        )
-        let cust1 = Customer(displayName: "王先生", phone: "0912-345-678")
-
-        let merchant2 = Place(
-            name: "珍煮丹 - 羅斯福店",
-            coordinate: CLLocationCoordinate2D(latitude: 25.0211, longitude: 121.5280)
-        )
-        let drop2 = Place(
-            name: "公館捷運站出口2",
-            coordinate: CLLocationCoordinate2D(latitude: 25.0149, longitude: 121.5331)
-        )
-        let cust2 = Customer(displayName: "林小姐", phone: "0988-555-666")
-
-        let now = Date()
-
-        var orders: [Order] = []
-
-        // 產生約 20 筆假資料：大多數為已送達少數為可接單，時間往回推
-        for i in 0..<20 {
-            let isFirstMerchant = i % 2 == 0
-            let merchant = isFirstMerchant ? merchant1 : merchant2
-            let drop = isFirstMerchant ? drop1 : drop2
-            let customer = isFirstMerchant ? cust1 : cust2
-
-            // 最近的幾筆維持為可接單，其餘視為已完成訂單
-            let status: OrderStatus = (i < 3) ? .available : .delivered
-
-            // 每筆間隔 45 分鐘，往過去推，讓歷史、收益有跨日資料
-            let createdAt = now.addingTimeInterval(TimeInterval(-45 * 60 * (i + 1)))
-
-            let codePrefix = isFirstMerchant ? "A" : "B"
-            let code = String(format: "%@%02d-%03d", codePrefix, i, 100 + i)
-
-            let fee: Double = 60 + Double((i % 5) * 10) // 60, 70, 80, 90, 100 循環
-            let distance: Double = 0.6 + Double(i % 4) * 0.4
-            let eta: Int = 8 + (i % 5) * 2
-
-            let notes = isFirstMerchant ? "多加辣，飲料去冰" : "請先聯繫再上樓"
-            let canPickup = (status == .available) ? (i % 2 == 0) : true
-
-            let order = Order(
-                code: code,
-                fee: fee,
-                distanceKm: distance,
-                etaMinutes: eta,
-                createdAt: createdAt,
-                merchant: merchant,
-                customer: customer,
-                dropoff: drop,
-                notes: notes,
-                canPickup: canPickup,
-                status: status
-            )
-            orders.append(order)
-        }
-
-        return orders
-    }
-
-    func streamAvailableOrders() -> AsyncStream<[Order]> {
-        AsyncStream { continuation in
-            let available = orders.filter { $0.status == .available }
-            continuation.yield(available)
-        }
-    }
-
-    func fetchActiveTasks() async throws -> [Order] {
-        orders.filter { $0.isActive }
-    }
-
-    func fetchHistoryTasks() async throws -> [Order] {
-        orders.filter { !$0.isActive }
-    }
-
-    func accept(order: Order) async throws -> Order {
-        guard let idx = orders.firstIndex(where: { $0.id == order.id }) else {
-            return order
-        }
-        orders[idx].status = .assigned
-        return orders[idx]
-    }
-
-    func updateStatus(order: Order, to status: OrderStatus) async throws -> Order {
-        if let idx = orders.firstIndex(where: { $0.id == order.id }) {
-            orders[idx].status = status
-            return orders[idx]
-        }
-        var updated = order
-        updated.status = status
-        return updated
-    }
-
-    func reportIncident(order: Order, note: String) async throws {
-        print("Mock incident for order \(order.id): \(note)")
-    }
-
-    func updateLocation(orderId: String, coordinate: CLLocationCoordinate2D) async throws {
-        // mock 不上傳
-    }
-}
 
 
 struct DailyEarning: Identifiable, Hashable {
@@ -655,8 +539,7 @@ final class AppState: ObservableObject {
 
     init(onLogout: @escaping () -> Void = {}, onSwitchRole: @escaping () -> Void = {}) {
         let tokenProvider = { UserDefaults.standard.string(forKey: "auth_token") }
-        // customer 也允許使用外送員介面：非 demo 一律直連後端，demo 才用本地假資料
-        let service: OrderServiceProtocol = DemoConfig.isDemoAccount ? MockOrderService() : NetworkOrderService(tokenProvider: tokenProvider)
+        let service: OrderServiceProtocol = NetworkOrderService(tokenProvider: tokenProvider)
         _appState = StateObject(wrappedValue: AppState(service: service))
         _loc = StateObject(wrappedValue: LocationManager())
         self.onLogout = onLogout
