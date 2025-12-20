@@ -531,6 +531,11 @@ final class AppState: ObservableObject {
 
     deinit { streamTask?.cancel() }
 
+    func stopStreaming() {
+        streamTask?.cancel()
+        streamTask = nil
+    }
+
     func startStreaming() {
         streamTask?.cancel()
         streamTask = Task { [weak self] in
@@ -662,6 +667,9 @@ final class AppState: ObservableObject {
         RootView(onLogout: onLogout, onSwitchRole: onSwitchRole)
             .environmentObject(appState)
             .environmentObject(loc)
+            .onDisappear {
+                appState.stopStreaming()
+            }
     }
 }
 
