@@ -789,6 +789,12 @@ final class CustomerOrderStore: ObservableObject {
             if let rating = detail.rating {
                 order.rating = rating
             }
+            if let riderName = detail.riderName {
+                order.riderName = riderName
+            }
+            if let riderPhone = detail.riderPhone {
+                order.riderPhone = riderPhone
+            }
         }
 
         if let idx = activeOrders.firstIndex(where: { $0.id == detail.id }) {
@@ -831,6 +837,8 @@ struct CustomerOrder: Identifiable {
     var totalAmount: Int?
     var deliveryFee: Int?
     var rating: OrderAPI.OrderRating?
+    var riderName: String?
+    var riderPhone: String?
 }
 
 extension CustomerOrder: Equatable {
@@ -923,7 +931,9 @@ private extension OrderAPI.OrderSummary {
             placedAt: date,
             totalAmount: totalAmount,
             deliveryFee: nil,
-            rating: rating ?? existingRating
+            rating: rating ?? existingRating,
+            riderName: nil,
+            riderPhone: nil
         )
     }
 }

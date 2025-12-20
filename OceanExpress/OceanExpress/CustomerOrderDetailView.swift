@@ -177,7 +177,8 @@ struct CustomerOrderDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("聯繫外送員")
                 .font(.headline)
-            if let phone = detail?.riderPhone, !phone.isEmpty, let telURL = URL(string: "tel://\(phone.filter { $0.isNumber })") {
+            let phone = detail?.riderPhone ?? order.riderPhone
+            if let phone, !phone.isEmpty, let telURL = URL(string: "tel://\(phone.filter { $0.isNumber })") {
                 Button {
                     openURL(telURL)
                 } label: {

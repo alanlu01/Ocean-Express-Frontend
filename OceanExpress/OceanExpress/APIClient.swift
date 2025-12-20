@@ -5,7 +5,7 @@ enum APIConfig {
         if let env = ProcessInfo.processInfo.environment["API_BASE_URL"], let url = URL(string: env) {
             return url
         }
-        return URL(string: "http://localhost:3000")!
+        return URL(string: "https://ocean-express-backend.onrender.com")!
     }
 }
 
@@ -469,6 +469,9 @@ enum OrderAPI {
         guard let url = components?.url else { throw APIError(message: "Invalid order detail URL") }
 
         let data = try await APIClient.request(url: url, token: token)
+        if let raw = String(data: data, encoding: .utf8) {
+            print("📦 Order detail raw for \(id):\n\(raw)")
+        }
         let wrapper = try APIClient.decoder().decode(OrderDetailWrapper.self, from: data)
         return wrapper.data
     }
