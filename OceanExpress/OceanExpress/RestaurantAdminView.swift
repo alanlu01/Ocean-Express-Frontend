@@ -1058,7 +1058,7 @@ struct RestaurantMenuEditor: View {
                     TagsEditor(title: "過敏原", items: $item.allergens, placeholder: "過敏原")
                     TagsEditor(title: "標籤", items: $item.tags, placeholder: "標籤")
                 }
-                if !item.isNew, let onDelete {
+                if !item.isNew, onDelete != nil {
                     Section {
                         Button(role: .destructive) {
                             showDeleteConfirm = true

@@ -937,8 +937,8 @@ struct OrderDetailView: View {
     /// 直接跳到 Apple Maps 導航（取餐/送達）
     private func openInAppleMaps(goToPickup: Bool) {
         let target = goToPickup ? liveOrder.merchant.coordinate : liveOrder.dropoff.coordinate
-        let placemark = MKPlacemark(coordinate: target)
-        let item = MKMapItem(placemark: placemark)
+        let location = CLLocation(latitude: target.latitude, longitude: target.longitude)
+        let item = MKMapItem(location: location, address: nil)
         item.name = goToPickup ? "取餐：\(liveOrder.merchant.name)" : "送達：\(liveOrder.dropoff.name)"
         item.openInMaps(launchOptions: [
             MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
@@ -1525,7 +1525,6 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     func registerDeviceIfNeeded(userId: String?, role: String?, restaurantId: String?, authToken: String?) {
         guard isPushEnabled, let authToken, !authToken.isEmpty else { return }
         guard let token = apnsToken else { return }
-        let alreadyUploaded = defaults.bool(forKey: uploadedKey)
         Task {
             do {
                 try await PushAPI.registerDevice(token: token, userId: userId, role: role, restaurantId: restaurantId, authToken: authToken)

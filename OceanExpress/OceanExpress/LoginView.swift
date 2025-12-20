@@ -165,7 +165,7 @@ struct LoginView: View {
         }
         NotificationManager.shared.enablePushForSession()
         // 補傳推播裝置資訊（若尚未上傳）
-        if let apns = NotificationManager.shared.apnsToken {
+        if NotificationManager.shared.apnsToken != nil {
             NotificationManager.shared.registerDeviceIfNeeded(
                 userId: defaults.string(forKey: "auth_user_id"),
                 role: defaults.string(forKey: "auth_role"),
@@ -260,7 +260,7 @@ struct LoginView: View {
                     }
                 }
                 isLoading = false
-                if let token = NotificationManager.shared.apnsToken {
+                if NotificationManager.shared.apnsToken != nil {
                     NotificationManager.shared.registerDeviceIfNeeded(userId: result.user.id, role: backendRole.rawValue, restaurantId: result.user.restaurantId, authToken: result.token)
                 }
                 withAnimation { isLoggedIn = true }
