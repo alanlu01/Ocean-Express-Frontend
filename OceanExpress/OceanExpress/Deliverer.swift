@@ -11,6 +11,8 @@ import MapKit
 import CoreLocation
 import CoreLocationUI
 import Charts
+import UIKit
+import UserNotifications
 
 // MARK: - Domain Models
 
@@ -24,6 +26,32 @@ enum OrderStatus: String, Codable, CaseIterable, Identifiable {
     case cancelled // 已取消
 
     var id: String { rawValue }
+
+    /// 後端狀態字串（snake_case），用來和 API 對齊
+    var serverValue: String {
+        switch self {
+        case .available: return "available"
+        case .assigned: return "assigned"
+        case .enRouteToPickup: return "en_route_to_pickup"
+        case .pickedUp: return "picked_up"
+        case .delivering: return "delivering"
+        case .delivered: return "delivered"
+        case .cancelled: return "cancelled"
+        }
+    }
+
+    init?(serverValue: String) {
+        switch serverValue {
+        case "available": self = .available
+        case "assigned": self = .assigned
+        case "en_route_to_pickup": self = .enRouteToPickup
+        case "picked_up": self = .pickedUp
+        case "delivering": self = .delivering
+        case "delivered": self = .delivered
+        case "cancelled": self = .cancelled
+        default: return nil
+        }
+    }
 
     var title: String {
         switch self {
@@ -50,19 +78,54 @@ enum OrderStatus: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum MerchantPrepStatus: String, Codable, CaseIterable, Identifiable {
+    case preparing      // 商家準備中
+    case ready          // 可取餐
+    case delayed        // 延遲
+    case cancelled      // 已取消 / 無法供應
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .preparing: return "商家準備中"
+        case .ready:     return "可取餐"
+        case .delayed:   return "出餐延遲"
+        case .cancelled: return "無法供應"
+        }
+    }
+}
+
+extension MerchantPrepStatus {
+    var color: Color {
+        switch self {
+        case .preparing: return .orange
+        case .ready:     return .green
+        case .delayed:   return .red
+        case .cancelled: return .gray
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .preparing: return "hourglass"
+        case .ready:     return "checkmark.seal.fill"
+        case .delayed:   return "exclamationmark.triangle.fill"
+        case .cancelled: return "xmark.octagon.fill"
+        }
+    }
+}
+
 struct Place: Hashable {
     var name: String
-    var address: String
     var coordinate: CLLocationCoordinate2D
     static func == (lhs: Place, rhs: Place) -> Bool {
         lhs.name == rhs.name &&
-        lhs.address == rhs.address &&
         lhs.coordinate.latitude == rhs.coordinate.latitude &&
         lhs.coordinate.longitude == rhs.coordinate.longitude
     }
     func hash(into hasher: inout Hasher) {
         hasher.combine(name)
-        hasher.combine(address)
         hasher.combine(coordinate.latitude)
         hasher.combine(coordinate.longitude)
     }
@@ -71,16 +134,16 @@ struct Place: Hashable {
 struct Customer: Hashable {
     var displayName: String
     var phone: String
-    var address: String
+    var email: String? = nil
 }
 
 struct Order: Identifiable, Hashable {
-    var id: UUID = UUID()
+    var id: String = UUID().uuidString
     var code: String // 顯示編號用
     var fee: Double // 外送費
     var distanceKm: Double // 粗估距離（列表展示）
     var etaMinutes: Int // 粗估時間（列表展示）
-    var createdAt: Date
+    var createdAt: Date = Date()
 
     var merchant: Place
     var customer: Customer
@@ -92,7 +155,30 @@ struct Order: Identifiable, Hashable {
 
     var routePolyline: MKPolyline? = nil
 
-    var isActive: Bool { status != .delivered && status != .cancelled }
+    /// 進行中任務：已接單後才算 active（排除 available / delivered / cancelled）
+    var isActive: Bool {
+        status != .available && status != .delivered && status != .cancelled
+    }
+
+    var canAdvance: Bool {
+        status != .delivered && status != .cancelled
+    }
+
+    var canMarkCancelled: Bool {
+        status != .delivered
+    }
+
+    static func == (lhs: Order, rhs: Order) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
+
+
+extension Order {
+    /// 目前先以 canPickup 對應商家狀態：false = 準備中、true = 可取餐。
+    /// 未來若後端提供更細緻的商家狀態，可在這裡改成讀取 API 的欄位。
+    var merchantPrepStatus: MerchantPrepStatus {
+        return canPickup ? .ready : .preparing
+    }
 }
 
 
@@ -142,78 +228,165 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     }
 }
 
-// MARK: - Services (Mock)
+// MARK: - Services (API + Mock)
 
 protocol OrderServiceProtocol {
     func streamAvailableOrders() -> AsyncStream<[Order]>
+    func fetchActiveTasks() async throws -> [Order]
+    func fetchHistoryTasks() async throws -> [Order]
     func accept(order: Order) async throws -> Order
     func updateStatus(order: Order, to status: OrderStatus) async throws -> Order
+    func reportIncident(order: Order, note: String) async throws
+    func updateLocation(orderId: String, coordinate: CLLocationCoordinate2D) async throws
 }
 
 @MainActor
-final class MockOrderService: OrderServiceProtocol {
-    private var available: [Order] = []
+final class NetworkOrderService: OrderServiceProtocol {
+    private let tokenProvider: () -> String?
+    private let pollInterval: Duration = .seconds(6)
 
-    init() {
-        available = Self.sampleOrders()
-    }
-
-    nonisolated static func sampleOrders() -> [Order] {
-        let merchant1 = Place(name: "小林便當 - 公館店", address: "台北市中正區羅斯福路四段1號", coordinate: .init(latitude: 25.0143, longitude: 121.5323))
-        let drop1 = Place(name: "台大電機系館", address: "台北市大安區辛亥路二段1號", coordinate: .init(latitude: 25.0172, longitude: 121.5395))
-        let cust1 = Customer(displayName: "王先生", phone: "0912-345-678", address: drop1.address)
-
-        let merchant2 = Place(name: "珍煮丹 - 羅斯福店", address: "台北市中正區羅斯福路三段100號", coordinate: .init(latitude: 25.0211, longitude: 121.5280))
-        let drop2 = Place(name: "公館捷運站出口2", address: "台北市中正區羅斯福路四段", coordinate: .init(latitude: 25.0149, longitude: 121.5331))
-        let cust2 = Customer(displayName: "林小姐", phone: "0988-555-666", address: drop2.address)
-
-        let now = Date()
-
-        return [
-            Order(code: "A1-892", fee: 85, distanceKm: 1.2, etaMinutes: 12, createdAt: now.addingTimeInterval(-300), merchant: merchant1, customer: cust1, dropoff: drop1, notes: "多加辣，飲料去冰", canPickup: true, status: .available),
-            Order(code: "B7-443", fee: 62, distanceKm: 0.8, etaMinutes: 10, createdAt: now.addingTimeInterval(-120), merchant: merchant2, customer: cust2, dropoff: drop2, notes: "請先聯繫再上樓", canPickup: false, status: .available),
-        ]
+    init(tokenProvider: @escaping () -> String?) {
+        self.tokenProvider = tokenProvider
     }
 
     func streamAvailableOrders() -> AsyncStream<[Order]> {
-        var current = available
+        let tokenProvider = self.tokenProvider
         return AsyncStream { continuation in
-            // 初始 emit
-            continuation.yield(current)
-
-            // 模擬即時新增/變動
-            let task = Task { @MainActor in
+            let task = Task {
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(7))
-                    // 偶爾新增一筆
-                    if Bool.random(), let random = Self.sampleOrders().randomElement() {
-                        current.append(random)
+                    do {
+                        guard let token = tokenProvider(), !token.isEmpty else {
+                            continuation.yield([])
+                            try? await Task.sleep(for: pollInterval)
+                            continue
+                        }
+                        let list = try await DelivererAPI.fetchAvailable(token: token)
+                        continuation.yield(list.map { $0.toOrder() })
+                    } catch {
+                        print("Available orders fetch error:", error)
+                        await MainActor.run {
+                            NotificationManager.shared.notify(title: "外送任務錯誤", body: error.localizedDescription)
+                        }
                     }
-                    // 偶爾更新距離與時間（模擬動態估算）
-                    current = current.map { o in
-                        var o2 = o
-                        let drift = Double.random(in: -0.1...0.1)
-                        o2.distanceKm = max(0.3, o.distanceKm + drift)
-                        o2.etaMinutes = max(5, Int(Double(o.etaMinutes) + drift * 10))
-                        return o2
-                    }
-                    continuation.yield(current)
+                    try? await Task.sleep(for: pollInterval)
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
     }
 
+    func fetchActiveTasks() async throws -> [Order] {
+        guard let token = tokenProvider(), !token.isEmpty else { return [] }
+        do {
+            let list = try await DelivererAPI.fetchActive(token: token)
+            return list.map { $0.toOrder() }
+        } catch {
+            await MainActor.run {
+                NotificationManager.shared.notify(title: "任務同步失敗", body: error.localizedDescription)
+            }
+            throw error
+        }
+    }
+
+    func fetchHistoryTasks() async throws -> [Order] {
+        guard let token = tokenProvider(), !token.isEmpty else { return [] }
+        do {
+            let list = try await DelivererAPI.fetchHistory(token: token)
+            return list.map { $0.toOrder() }
+        } catch {
+            await MainActor.run {
+                NotificationManager.shared.notify(title: "歷史任務同步失敗", body: error.localizedDescription)
+            }
+            throw error
+        }
+    }
+
     func accept(order: Order) async throws -> Order {
+        let token = tokenProvider()
+        if let task = try await DelivererAPI.accept(id: order.id, token: token) {
+            return task.toOrder(overrides: order)
+        }
         var updated = order
         updated.status = .assigned
         return updated
     }
 
     func updateStatus(order: Order, to status: OrderStatus) async throws -> Order {
+        let token = tokenProvider()
+        if let task = try await DelivererAPI.updateStatus(id: order.id, status: status.serverValue, token: token) {
+            return task.toOrder(overrides: order)
+        }
         var updated = order
         updated.status = status
         return updated
+    }
+
+    func reportIncident(order: Order, note: String) async throws {
+        let token = tokenProvider()
+        try await DelivererAPI.reportIncident(id: order.id, note: note, token: token)
+    }
+
+    func updateLocation(orderId: String, coordinate: CLLocationCoordinate2D) async throws {
+        let token = tokenProvider()
+        try await DelivererAPI.updateLocation(id: orderId, lat: coordinate.latitude, lng: coordinate.longitude, token: token)
+    }
+}
+
+
+private let defaultCoordinate = CLLocationCoordinate2D(latitude: 0, longitude: 0)
+
+extension DelivererAPI.Stop {
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: lat ?? 0, longitude: lng ?? 0)
+    }
+
+    func toPlace() -> Place {
+        Place(name: name ?? "未知地點", coordinate: coordinate)
+    }
+
+    func toCustomer() -> Customer {
+        Customer(displayName: name ?? "顧客", phone: phone ?? "", email: email)
+    }
+}
+
+extension DelivererAPI.Task {
+    func toOrder(overrides existing: Order? = nil) -> Order {
+        var base = existing ?? Order(
+            code: code ?? (id ?? "N/A"),
+            fee: fee.map(Double.init) ?? 0,
+            distanceKm: distanceKm ?? 0,
+            etaMinutes: etaMinutes ?? 0,
+            merchant: merchant?.toPlace() ?? Place(name: "未知店家", coordinate: defaultCoordinate),
+            customer: customer?.toCustomer() ?? Customer(displayName: "顧客", phone: ""),
+            dropoff: (dropoff ?? customer)?.toPlace() ?? Place(name: "送達地點", coordinate: defaultCoordinate),
+            notes: notes ?? "",
+            canPickup: canPickup ?? true,
+            status: OrderStatus(serverValue: status ?? "") ?? .available
+        )
+        base.id = id ?? existing?.id ?? UUID().uuidString
+        base.code = code ?? base.code
+        base.fee = fee.map(Double.init) ?? base.fee
+        base.distanceKm = distanceKm ?? base.distanceKm
+        base.etaMinutes = etaMinutes ?? base.etaMinutes
+        base.notes = notes ?? base.notes
+        base.canPickup = canPickup ?? base.canPickup
+        if let createdAt { base.createdAt = createdAt }
+        if let newStatus = OrderStatus(rawValue: status ?? "") {
+            base.status = newStatus
+        }
+        if let merchantPlace = merchant?.toPlace() {
+            base.merchant = merchantPlace
+        }
+        if let customerStop = customer {
+            base.customer = customerStop.toCustomer()
+            if dropoff == nil {
+                base.dropoff = customerStop.toPlace()
+            }
+        }
+        if let dropStop = dropoff {
+            base.dropoff = dropStop.toPlace()
+        }
+        return base
     }
 }
 
@@ -226,24 +399,45 @@ final class AppState: ObservableObject {
     @Published var history: [Order] = []
     @Published var dailyEarnings: [DailyEarning] = []
     @Published var selectedOrder: Order? = nil
+    @Published var enableNewOrderNotifications: Bool = true
 
     private let service: OrderServiceProtocol
     private var streamTask: Task<Void, Never>? = nil
+    private var lastAvailableOrderIDs: Set<String> = []
+    private var lastLocationUpdate: Date?
 
     init(service: any OrderServiceProtocol) {
         self.service = service
-        self.dailyEarnings = Self.mockEarnings()
+        self.dailyEarnings = []
         startStreaming()
+        Task { await refreshTasks() }
     }
 
     deinit { streamTask?.cancel() }
+
+    func stopStreaming() {
+        streamTask?.cancel()
+        streamTask = nil
+    }
 
     func startStreaming() {
         streamTask?.cancel()
         streamTask = Task { [weak self] in
             guard let self else { return }
             for await list in service.streamAvailableOrders() {
-                self.availableOrders = list.filter { $0.status == .available }
+                let available = list.filter { $0.status == .available }
+                let currentIDs = Set(available.map { $0.id })
+                let newlyAdded = available.filter { !self.lastAvailableOrderIDs.contains($0.id) }
+                self.lastAvailableOrderIDs = currentIDs
+                await MainActor.run {
+                    print("🚚 available orders count: \(available.count)")
+                    self.availableOrders = available
+                    newlyAdded.forEach { order in
+                        if self.enableNewOrderNotifications {
+                            NotificationManager.shared.notifyNewOrder(order)
+                        }
+                    }
+                }
             }
         }
     }
@@ -255,6 +449,7 @@ final class AppState: ObservableObject {
             availableOrders.removeAll { $0.id == order.id }
             activeTasks.append(accepted)
             selectedOrder = accepted
+            await refreshTasks()
         } catch {
             print("Accept error: \(error)")
         }
@@ -263,34 +458,74 @@ final class AppState: ObservableObject {
     func updateStatus(for order: Order, to status: OrderStatus) async {
         do {
             let updated = try await service.updateStatus(order: order, to: status)
+            // 先在目前 activeTasks 中樂觀更新，讓列表上的狀態文字立即變更
             if let idx = activeTasks.firstIndex(where: { $0.id == order.id }) {
                 activeTasks[idx] = updated
             }
-            if status == .delivered || status == .cancelled {
-                // 移入歷史
-                if let idx = activeTasks.firstIndex(where: { $0.id == order.id }) {
-                    let finished = activeTasks.remove(at: idx)
-                    history.insert(finished, at: 0)
-                    // 結帳：累計收入
-                    let today = Calendar.current.startOfDay(for: Date())
-                    if let eidx = dailyEarnings.firstIndex(where: { Calendar.current.isDate($0.date, inSameDayAs: today) }) {
-                        dailyEarnings[eidx].amount += finished.fee
-                    } else {
-                        dailyEarnings.append(.init(date: today, amount: finished.fee))
-                    }
-                }
-            }
+            // 再由 refreshTasks() 根據最新 orders 決定 activeTasks / history / dailyEarnings
+            await refreshTasks()
+            NotificationManager.shared.notifyStatusChanged(updated)
         } catch {
             print("Status update error: \(error)")
         }
     }
 
-    static func mockEarnings() -> [DailyEarning] {
+    func reportIncident(for order: Order, note: String) async {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try await service.reportIncident(order: order, note: trimmed)
+            // 回報後重新同步，確保進行中／歷史頁面資料一致
+            await refreshTasks()
+        } catch {
+            print("Report incident error:", error)
+        }
+    }
+
+    func refreshTasks() async {
+        do {
+            let actives = try await service.fetchActiveTasks()
+            let histories = try await service.fetchHistoryTasks()
+            activeTasks = actives
+            history = histories.sorted { $0.createdAt < $1.createdAt }
+            dailyEarnings = AppState.computeEarnings(from: histories)
+        } catch {
+            print("Fetch tasks error:", error)
+            await MainActor.run {
+                NotificationManager.shared.notify(title: "同步任務失敗", body: error.localizedDescription)
+            }
+        }
+    }
+
+    func updateLocation(_ location: CLLocationCoordinate2D) async {
+        guard !activeTasks.isEmpty else { return }
+        let now = Date()
+        if let last = lastLocationUpdate, now.timeIntervalSince(last) < 10 { return }
+        lastLocationUpdate = now
+        for order in activeTasks where order.isActive {
+            do {
+                try await service.updateLocation(orderId: order.id, coordinate: location)
+            } catch {
+                print("Update location failed for order \(order.id): \(error)")
+            }
+        }
+    }
+
+    private static func computeEarnings(from orders: [Order]) -> [DailyEarning] {
+        var accumulator: [Date: Int] = [:]
         let cal = Calendar.current
-        return (0..<10).map { i in
-            let d = cal.date(byAdding: .day, value: -i, to: Date())!
-            return DailyEarning(date: cal.startOfDay(for: d), amount: Double(Int.random(in: 350...1200)))
-        }.sorted { $0.date < $1.date }
+
+        // 收益邏輯：每單固定 20 元，當日收益 = 20 * 當日完成單數
+        orders.forEach { order in
+            let day = cal.startOfDay(for: order.createdAt)
+            accumulator[day, default: 0] += 1
+        }
+
+        return accumulator
+            .map { (day, count) in
+                DailyEarning(date: day, amount: Double(count * 20))
+            }
+            .sorted { $0.date < $1.date }
     }
 }
 
@@ -301,10 +536,11 @@ final class AppState: ObservableObject {
     @StateObject private var loc: LocationManager
     var onLogout: () -> Void
     var onSwitchRole: () -> Void
-    
 
     init(onLogout: @escaping () -> Void = {}, onSwitchRole: @escaping () -> Void = {}) {
-        _appState = StateObject(wrappedValue: AppState(service: MockOrderService()))
+        let tokenProvider = { UserDefaults.standard.string(forKey: "auth_token") }
+        let service: OrderServiceProtocol = NetworkOrderService(tokenProvider: tokenProvider)
+        _appState = StateObject(wrappedValue: AppState(service: service))
         _loc = StateObject(wrappedValue: LocationManager())
         self.onLogout = onLogout
         self.onSwitchRole = onSwitchRole
@@ -314,10 +550,14 @@ final class AppState: ObservableObject {
         RootView(onLogout: onLogout, onSwitchRole: onSwitchRole)
             .environmentObject(appState)
             .environmentObject(loc)
+            .onDisappear {
+                appState.stopStreaming()
+            }
     }
 }
 
 struct RootView: View {
+    @EnvironmentObject var app: AppState
     @EnvironmentObject var loc: LocationManager
     var onLogout: () -> Void
     var onSwitchRole: () -> Void
@@ -335,7 +575,16 @@ struct RootView: View {
             DelivererSettingsView(onLogout: onLogout, onSwitchRole: onSwitchRole)
                 .tabItem { Label("設定", systemImage: "gearshape") }
         }
-        .onAppear { loc.request() }
+        .onAppear {
+            loc.request()
+            NotificationManager.shared.requestAuthorization()
+        }
+        .onReceive(loc.$userLocation.compactMap { $0 }) { location in
+            Task { await app.updateLocation(location.coordinate) }
+        }
+        .task {
+            await app.refreshTasks()
+        }
     }
 }
 
@@ -377,7 +626,7 @@ struct OrderCard: View {
             HStack(spacing: 16) {
                 Label("\(String(format: "%.1f", order.distanceKm)) km", systemImage: "location")
                 Label("\(order.etaMinutes) 分", systemImage: "clock")
-                Label(order.canPickup ? "可取餐" : "商家準備中", systemImage: order.canPickup ? "checkmark.seal" : "hourglass")
+                Label(order.merchantPrepStatus.title, systemImage: order.canPickup ? "checkmark.seal" : "hourglass")
             }
             .font(.subheadline)
             .foregroundStyle(.secondary)
@@ -386,14 +635,13 @@ struct OrderCard: View {
                 Image(systemName: "house")
                 VStack(alignment: .leading) {
                     Text(order.merchant.name).font(.subheadline)
-                    Text(order.merchant.address).font(.caption).foregroundStyle(.secondary)
                 }
             }
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "person")
                 VStack(alignment: .leading) {
                     Text(order.customer.displayName).font(.subheadline)
-                    Text(order.dropoff.address).font(.caption).foregroundStyle(.secondary)
+                    Text(order.dropoff.name).font(.caption).foregroundStyle(.secondary)
                 }
             }
             if !order.notes.isEmpty {
@@ -421,48 +669,66 @@ struct OrderCard: View {
 
 struct ActiveTasksView: View {
     @EnvironmentObject var app: AppState
+    @EnvironmentObject var loc: LocationManager
 
     var body: some View {
         NavigationStack {
-            if app.activeTasks.isEmpty {
-                ContentUnavailableView("尚無進行中任務", systemImage: "tray")
-            } else {
-                List(app.activeTasks) { order in
-                    VStack(alignment: .leading, spacing: 8) {
-                        NavigationLink(value: order) {
-                            OrderProgressRow(order: order)
+            Group {
+                if app.activeTasks.isEmpty {
+                    ContentUnavailableView("尚無進行中任務", systemImage: "tray")
+                } else {
+                    List(app.activeTasks) { order in
+                        VStack(alignment: .leading, spacing: 8) {
+                            NavigationLink(value: order) {
+                                OrderProgressRow(order: order)
+                            }
                         }
+                        .padding(.vertical, 4)
                     }
-                    .padding(.vertical, 4)
                 }
-                .navigationDestination(for: Order.self) { order in
-                    OrderDetailView(order: order)
-                }
-                .navigationTitle("進行中任務")
+            }
+            .navigationTitle("進行中任務")
+            .navigationDestination(for: Order.self) { order in
+                OrderDetailView(order: order)
+                    .environmentObject(app)
+                    .environmentObject(loc)
             }
         }
     }
 }
 
 struct OrderProgressRow: View {
+    @EnvironmentObject var app: AppState
     let order: Order
+
+    /// 讓列顯示的是最新的訂單狀態，而不是初始傳入的快照
+    private var currentOrder: Order {
+        app.activeTasks.first(where: { $0.id == order.id }) ?? order
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("#\(order.code)").font(.headline)
+                Text("#\(currentOrder.code)").font(.headline)
                 Spacer()
-                Text(order.status.title).font(.subheadline).foregroundStyle(.blue)
+                Text(currentOrder.status.title)
+                    .font(.subheadline)
+                    .foregroundStyle(.blue)
             }
             ProgressView(value: progressValue)
             HStack(spacing: 16) {
-                Label("$\(Int(order.fee))", systemImage: "dollarsign")
-                Label("\(String(format: "%.1f", order.distanceKm)) km", systemImage: "location")
-                Label("\(order.etaMinutes) 分", systemImage: "clock")
-            }.font(.caption).foregroundStyle(.secondary)
+                Label("$\(Int(currentOrder.fee))", systemImage: "dollarsign")
+                Label("\(String(format: "%.1f", currentOrder.distanceKm)) km", systemImage: "location")
+                Label("\(currentOrder.etaMinutes) 分", systemImage: "clock")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
+
     private var progressValue: Double {
-        max(0, min(1, Double(order.status.stepIndex) / 5.0))
+        let idx = currentOrder.status.stepIndex
+        return max(0, min(1, Double(idx) / 5.0))
     }
 }
 
@@ -484,6 +750,7 @@ struct StatusQuickActions: View {
 struct OrderDetailView: View {
     @EnvironmentObject var app: AppState
     @EnvironmentObject var loc: LocationManager
+    @Environment(\.dismiss) private var dismiss
     let order: Order
     @State private var region: MKCoordinateRegion
     @State private var showUpdateSheet = false
@@ -496,6 +763,23 @@ struct OrderDetailView: View {
     }
 
     private func computeRoute() {
+        // 優先使用後端回傳的路線座標（Order.routePolyline）
+        if let polyline = liveOrder.routePolyline {
+            let coords = polyline.coordinates
+            guard !coords.isEmpty else { return }
+            routeCoords = coords
+            routeDistanceMeters = polyline.length
+            // 若後端已估算 ETA，直接用訂單上的 etaMinutes；否則保留為 0
+            routeETASecs = liveOrder.etaMinutes > 0 ? TimeInterval(liveOrder.etaMinutes * 60) : 0
+
+            // 依據整條路線調整顯示範圍
+            let rect = polyline.boundingMapRect
+            let regionRect = MKCoordinateRegion(rect)
+            region = regionRect
+            return
+        }
+
+        // 若尚未有後端路線，退回使用 Apple Maps 規劃路線
         let startCoord: CLLocationCoordinate2D
         let endCoord: CLLocationCoordinate2D
         if liveOrder.status == .enRouteToPickup, let u = loc.userLocation?.coordinate {
@@ -523,6 +807,25 @@ struct OrderDetailView: View {
             let regionRect = MKCoordinateRegion(rect)
             region = regionRect
         }
+    }
+
+    /// 一鍵撥打給顧客（使用 tel://）
+    private func callCustomer() {
+        let raw = liveOrder.customer.phone.trimmingCharacters(in: .whitespacesAndNewlines)
+        let digits = raw.filter { $0.isNumber || $0 == "+" }
+        guard !digits.isEmpty, let url = URL(string: "tel://\(digits)") else { return }
+        UIApplication.shared.open(url)
+    }
+
+    /// 直接跳到 Apple Maps 導航（取餐/送達）
+    private func openInAppleMaps(goToPickup: Bool) {
+        let target = goToPickup ? liveOrder.merchant.coordinate : liveOrder.dropoff.coordinate
+        let location = CLLocation(latitude: target.latitude, longitude: target.longitude)
+        let item = MKMapItem(location: location, address: nil)
+        item.name = goToPickup ? "取餐：\(liveOrder.merchant.name)" : "送達：\(liveOrder.dropoff.name)"
+        item.openInMaps(launchOptions: [
+            MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
+        ])
     }
 
     init(order: Order) {
@@ -555,14 +858,45 @@ struct OrderDetailView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .padding(.horizontal)
             .padding(.top)
+            .overlay(alignment: .bottomTrailing) {
+                Menu {
+                    Button {
+                        openInAppleMaps(goToPickup: true)
+                    } label: {
+                        Label("導航到取餐點", systemImage: "bag.fill")
+                    }
+                    Button {
+                        openInAppleMaps(goToPickup: false)
+                    } label: {
+                        Label("導航到送達地點", systemImage: "mappin.and.ellipse")
+                    }
+                } label: {
+                    Label("在地圖開啟", systemImage: "map")
+                        .padding(8)
+                        .background(.thinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .padding(10)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 12) {
                 InfoRow(title: "顧客", value: "\(liveOrder.customer.displayName)  (☎︎ \(liveOrder.customer.phone))")
-                InfoRow(title: "送達地址", value: liveOrder.dropoff.address)
+                InfoRow(title: "送達地點", value: liveOrder.dropoff.name)
                 InfoRow(title: "商家", value: liveOrder.merchant.name)
-                InfoRow(title: "商家地址", value: liveOrder.merchant.address)
                 InfoRow(title: "備註", value: liveOrder.notes.isEmpty ? "無" : liveOrder.notes)
-                InfoRow(title: "取餐狀態", value: liveOrder.canPickup ? "可取餐" : "準備中")
+                HStack(alignment: .top) {
+                    Text("取餐狀態")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .frame(width: 80, alignment: .leading)
+                    Label(liveOrder.merchantPrepStatus.title, systemImage: liveOrder.merchantPrepStatus.systemImage)
+                        .font(.subheadline)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .foregroundStyle(.white)
+                        .background(liveOrder.merchantPrepStatus.color)
+                        .clipShape(Capsule())
+                    Spacer()
+                }
                 Divider()
                 HStack(spacing: 16) {
                     Label("$\(Int(liveOrder.fee))", systemImage: "dollarsign")
@@ -587,24 +921,48 @@ struct OrderDetailView: View {
                 .presentationDetents([.height(360), .medium])
         }
         .safeAreaInset(edge: .bottom) {
-            Button {
-                showUpdateSheet = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "square.and.pencil")
-                    Text("更新狀態")
-                        .fontWeight(.semibold)
+            HStack(spacing: 12) {
+                Button {
+                    callCustomer()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "phone.fill")
+                        Text("打給買家")
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+
+                Button {
+                    showUpdateSheet = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.and.pencil")
+                        Text("更新訂單")
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
             .padding(.horizontal)
+            .padding(.vertical, 4)
             .background(.ultraThinMaterial)
         }
         .onAppear { computeRoute() }
-        .onChange(of: app.activeTasks) { _, _ in computeRoute() }
+        .onChange(of: app.activeTasks) { _, _ in
+            // 若此訂單已不再是進行中（例如已送達），自動返回列表
+            if !liveOrder.isActive {
+                dismiss()
+            } else {
+                computeRoute()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in computeRoute() }
     }
 }
@@ -659,9 +1017,16 @@ struct StatusUpdateSheet: View {
                 .textFieldStyle(.roundedBorder)
             HStack {
                 Button("回報狀況") {
-                    // TODO: 上報客服／商家（此處為示意）
-                    incidentNote = ""
-                    dismiss()
+                    let trimmed = incidentNote.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else {
+                        dismiss()
+                        return
+                    }
+                    Task {
+                        await app.reportIncident(for: order, note: trimmed)
+                        incidentNote = ""
+                        dismiss()
+                    }
                 }
                 .buttonStyle(.bordered)
                 Spacer()
@@ -764,14 +1129,81 @@ struct NavigationMapView: View {
 
 // MARK: 歷史紀錄頁（含收益統計）
 
+enum EarningsFilter: String, CaseIterable, Identifiable {
+    case year
+    case month
+    case week
+    case day
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .year:  return "今年"
+        case .month: return "本月"
+        case .week:  return "本週"
+        case .day:   return "今日"
+        }
+    }
+}
+
 struct HistoryView: View {
     @EnvironmentObject var app: AppState
+    @State private var selectedFilter: EarningsFilter = .month
+
+    private var filteredEarnings: [DailyEarning] {
+        let cal = Calendar.current
+        let now = Date()
+        return app.dailyEarnings.filter { item in
+            let date = item.date
+            switch selectedFilter {
+            case .year:
+                return cal.isDate(date, equalTo: now, toGranularity: .year)
+            case .month:
+                return cal.isDate(date, equalTo: now, toGranularity: .month)
+            case .week:
+                return cal.isDate(date, equalTo: now, toGranularity: .weekOfYear)
+            case .day:
+                return cal.isDate(date, equalTo: now, toGranularity: .day)
+            }
+        }
+    }
+
+    private var filteredHistory: [Order] {
+        let cal = Calendar.current
+        let now = Date()
+        return app.history.filter { order in
+            let date = order.createdAt
+            switch selectedFilter {
+            case .year:
+                return cal.isDate(date, equalTo: now, toGranularity: .year)
+            case .month:
+                return cal.isDate(date, equalTo: now, toGranularity: .month)
+            case .week:
+                return cal.isDate(date, equalTo: now, toGranularity: .weekOfYear)
+            case .day:
+                return cal.isDate(date, equalTo: now, toGranularity: .day)
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading) {
-                Text("收益統計").font(.headline).padding(.horizontal)
-                Chart(app.dailyEarnings) { item in
+                HStack {
+                    Text("收益統計").font(.headline)
+                    Spacer()
+                    Picker("區間", selection: $selectedFilter) {
+                        ForEach(EarningsFilter.allCases) { filter in
+                            Text(filter.title).tag(filter)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 260)
+                }
+                .padding(.horizontal)
+
+                Chart(filteredEarnings) { item in
                     LineMark(
                         x: .value("日期", item.date),
                         y: .value("金額", item.amount)
@@ -781,20 +1213,31 @@ struct HistoryView: View {
                         y: .value("金額", item.amount)
                     )
                 }
-                .chartYScale(domain: 0...max(1400, (app.dailyEarnings.map{ $0.amount }.max() ?? 0) * 1.2))
-                .frame(height: 180)
+                .chartXAxis {
+                    AxisMarks(values: .automatic) { value in
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel(format: .dateTime.month().day())
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading)
+                }
+                .frame(height: 220)
                 .padding(.horizontal)
 
                 List {
                     Section("已完成訂單") {
-                        ForEach(app.history) { order in
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text("#\(order.code)").font(.headline)
-                                    Spacer()
-                                    Text("$\(Int(order.fee))")
+                        ForEach(filteredHistory) { order in
+                            NavigationLink(value: order) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("#\(order.code)").font(.headline)
+                                        Spacer()
+                                        Text("$\(Int(order.fee))")
+                                    }
+                                    Text(order.dropoff.name).font(.caption).foregroundStyle(.secondary)
                                 }
-                                Text(order.dropoff.address).font(.caption).foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -803,11 +1246,63 @@ struct HistoryView: View {
             }
             .navigationTitle("歷史紀錄")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: Order.self) { order in
+                CompletedOrderDetailView(order: order)
+            }
         }
     }
 }
 
+struct CompletedOrderDetailView: View {
+    let order: Order
+
+    private var formattedDate: String {
+        DateFormatter.localizedString(from: order.createdAt, dateStyle: .medium, timeStyle: .short)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("#\(order.code)")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    Spacer()
+                    Text(order.status.title)
+                        .font(.subheadline)
+                        .foregroundStyle(.green)
+                }
+                .padding(.bottom, 4)
+
+                InfoRow(title: "完成時間", value: formattedDate)
+                // 歷史訂單僅顯示顧客姓名，不再顯示電話，避免誤以為可撥打
+                InfoRow(title: "顧客", value: order.customer.displayName)
+                InfoRow(title: "送達地點", value: order.dropoff.name)
+                InfoRow(title: "商家", value: order.merchant.name)
+                InfoRow(title: "備註", value: order.notes.isEmpty ? "無" : order.notes)
+
+                Divider()
+                    .padding(.vertical, 4)
+
+                HStack(spacing: 16) {
+                    Label("$\(Int(order.fee))", systemImage: "dollarsign")
+                    Label("\(String(format: "%.1f", order.distanceKm)) km", systemImage: "location")
+                    Label("\(order.etaMinutes) 分", systemImage: "clock")
+                }
+                .foregroundStyle(.secondary)
+                .font(.subheadline)
+
+                Spacer(minLength: 12)
+            }
+            .padding()
+        }
+        .navigationTitle("訂單回顧")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
 struct DelivererSettingsView: View {
+    @EnvironmentObject var app: AppState
     var onLogout: () -> Void
     var onSwitchRole: () -> Void
 
@@ -818,7 +1313,7 @@ struct DelivererSettingsView: View {
                     Button {
                         onSwitchRole()
                     } label: {
-                        Label("切換身份", systemImage: "arrow.triangle.2.circlepath")
+                        Label("切換成買家", systemImage: "arrow.triangle.2.circlepath")
                     }
 
                     Button(role: .destructive) {
@@ -829,7 +1324,7 @@ struct DelivererSettingsView: View {
                 }
 
                 Section("偏好設定") {
-                    Toggle(isOn: .constant(true)) {
+                    Toggle(isOn: $app.enableNewOrderNotifications) {
                         Label("接單通知", systemImage: "bell.badge.fill")
                     }
                     .tint(.accentColor)
@@ -850,6 +1345,133 @@ struct DelivererSettingsView: View {
 }
 
 
+
+@MainActor
+final class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationManager()
+    private let defaults = UserDefaults.standard
+    private let tokenKey = "apns_device_token"
+    private let uploadedKey = "apns_token_uploaded"
+    private let enabledKey = "push_enabled_for_session"
+    var isPushEnabled: Bool { defaults.bool(forKey: enabledKey) }
+    private(set) var apnsToken: String? {
+        didSet {
+            if let apnsToken {
+                defaults.set(apnsToken, forKey: tokenKey)
+            }
+        }
+    }
+
+    override init() {
+        super.init()
+        defaults.register(defaults: [enabledKey: false, uploadedKey: false])
+        apnsToken = defaults.string(forKey: tokenKey)
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    func enablePushForSession() {
+        defaults.set(true, forKey: enabledKey)
+        requestAuthorization()
+        DispatchQueue.main.async {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+    }
+
+    func disablePushForSession() {
+        defaults.set(false, forKey: enabledKey)
+        defaults.set(false, forKey: uploadedKey)
+        let center = UNUserNotificationCenter.current()
+        center.removeAllPendingNotificationRequests()
+        center.removeAllDeliveredNotifications()
+        DispatchQueue.main.async {
+            UIApplication.shared.unregisterForRemoteNotifications()
+        }
+    }
+
+    func requestAuthorization() {
+        guard isPushEnabled else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if let error = error {
+                print("Notification auth error: \(error)")
+            } else {
+                print("Notification permission granted: \(granted)")
+            }
+        }
+    }
+
+    func updateAPNSToken(_ token: String) {
+        apnsToken = token
+        defaults.set(false, forKey: uploadedKey)
+    }
+
+    func registerDeviceIfNeeded(userId: String?, role: String?, restaurantId: String?, authToken: String?) {
+        guard isPushEnabled, let authToken, !authToken.isEmpty else { return }
+        guard let token = apnsToken else { return }
+        Task {
+            do {
+                try await PushAPI.registerDevice(token: token, userId: userId, role: role, restaurantId: restaurantId, authToken: authToken)
+                defaults.set(true, forKey: uploadedKey)
+            } catch {
+                print("Push register failed:", error)
+                defaults.set(false, forKey: uploadedKey)
+            }
+        }
+    }
+
+    func notifyNewOrder(_ order: Order) {
+        guard isPushEnabled else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "新任務可接單"
+        content.body = "#\(order.code) $\(Int(order.fee)) · 約 \(String(format: "%.1f", order.distanceKm)) km / \(order.etaMinutes) 分"
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "new-order-\(order.id)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    func notifyStatusChanged(_ order: Order) {
+        guard isPushEnabled else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "任務狀態更新：\(order.status.title)"
+        content.body = "#\(order.code) 目前狀態為 \(order.status.title)"
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "status-\(order.id)-\(order.status.rawValue)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    func notify(title: String, body: String) {
+        guard isPushEnabled else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "generic-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .badge])
+    }
+}
+
 // MARK: - Utilities
 
 extension MKPolyline {
@@ -857,5 +1479,19 @@ extension MKPolyline {
         var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: Int(pointCount))
         getCoordinates(&coords, range: NSRange(location: 0, length: Int(pointCount)))
         return coords
+    }
+
+    /// 依照 polyline 上的所有點，估算總長度（公尺）
+    var length: CLLocationDistance {
+        let pts = points()
+        let n = Int(pointCount)
+        guard n > 1 else { return 0 }
+        var dist: CLLocationDistance = 0
+        for i in 0..<(n - 1) {
+            let p1 = pts[i]
+            let p2 = pts[i + 1]
+            dist += p1.distance(to: p2)
+        }
+        return dist
     }
 }

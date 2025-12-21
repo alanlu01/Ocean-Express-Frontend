@@ -1,0 +1,617 @@
+openapi: 3.1.0
+info:
+  title: OceanExpress API
+  version: "1.0.0"
+  description: REST API for customer / deliverer / restaurant roles.
+servers:
+  - url: https://api.oceanexpress.example.com
+  - url: http://localhost:3000
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [customer, deliverer, restaurant] }
+        phone: { type: string, nullable: true, example: "09xxxxxxxx" }
+      required: [id, email, role]
+    Restaurant:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        imageUrl: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        rating: { type: number, format: double, nullable: true, example: 4.5 }
+      required: [id, name]
+    MenuItem:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        price: { type: integer, format: int32 }
+        sizes:
+          type: array
+          items: { type: string }
+        spicinessOptions:
+          type: array
+          items: { type: string }
+        allergens:
+          type: array
+          items: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        imageUrl: { type: string, nullable: true }
+        isAvailable: { type: boolean, nullable: true }
+        sortOrder: { type: integer, format: int32, nullable: true }
+      required: [id, name, description, price]
+
+    OrderItemPayload:
+      type: object
+      properties:
+        menuItemId: { type: string }
+        size: { type: string }
+        spiciness: { type: string }
+        addDrink: { type: boolean }
+        quantity: { type: integer }
+      required: [menuItemId, size, spiciness, addDrink, quantity]
+    DeliveryLocation:
+      type: object
+      properties:
+        name: { type: string }
+        lat: { type: number, format: double, nullable: true }
+        lng: { type: number, format: double, nullable: true }
+        category: { type: string, nullable: true }
+      required: [name]
+
+    DeliveryLocationCategory:
+      type: object
+      properties:
+        category: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeliveryLocation' }
+      required: [category, items]
+    Order:
+      type: object
+      properties:
+        id: { type: string }
+        restaurantId: { type: string }
+        restaurantName: { type: string }
+        userId: { type: string }
+        status:
+          type: string
+          enum: [available, assigned, en_route_to_pickup, picked_up, delivering, delivered, cancelled]
+        etaMinutes: { type: integer, nullable: true }
+        placedAt: { type: string, format: date-time, example: "2025-11-23T02:00:00Z" }
+        requestedTime: { type: string, format: date-time, nullable: true, example: "2025-11-23T10:30:00Z" }
+        items:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/OrderItemPayload'
+        deliveryLocation: { $ref: '#/components/schemas/DeliveryLocation' }
+        notes: { type: string, nullable: true }
+        deliveryFee: { type: integer, format: int32, nullable: true }
+        totalAmount: { type: integer, format: int32, nullable: true }
+        riderName: { type: string, nullable: true }
+        riderPhone: { type: string, nullable: true }
+        statusHistory:
+          type: array
+          items: { $ref: '#/components/schemas/StatusHistory' }
+        rating: { $ref: '#/components/schemas/OrderRating' }
+      required: [id, restaurantId, status, placedAt, items, deliveryLocation]
+
+    StatusHistory:
+      type: object
+      properties:
+        status: { type: string }
+        timestamp: { type: string, format: date-time, nullable: true }
+      required: [status]
+
+    OrderRating:
+      type: object
+      properties:
+        score: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string, nullable: true }
+      required: [score]
+    DeliveryStop:
+      type: object
+      properties:
+        name: { type: string }
+        lat: { type: number, format: double, nullable: true }
+        lng: { type: number, format: double, nullable: true }
+        phone: { type: string, nullable: true }
+      required: [name]
+    DeliveryTask:
+      type: object
+      properties:
+        id: { type: string }
+        code: { type: string }
+        fee: { type: integer, format: int32 }
+        distanceKm: { type: number }
+        etaMinutes: { type: integer, nullable: true }
+        status:
+          type: string
+          enum: [available, assigned, en_route_to_pickup, picked_up, delivering, delivered, cancelled]
+        createdAt: { type: string, format: date-time, nullable: true }
+        notes: { type: string, nullable: true }
+        canPickup: { type: boolean, nullable: true }
+        merchant: { $ref: '#/components/schemas/DeliveryStop' }
+        customer: { $ref: '#/components/schemas/DeliveryStop' }
+        dropoff: { $ref: '#/components/schemas/DeliveryStop' }
+      required: [id, code, fee, distanceKm, status, merchant, customer, dropoff]
+    Error:
+      type: object
+      properties:
+        message: { type: string }
+        code: { type: string }
+      required: [message]
+paths:
+  /auth/login:
+    post:
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+              required: [email, password]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      user: { $ref: '#/components/schemas/User' }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/register:
+    post:
+      summary: Register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string }
+                phone: { type: string, pattern: "^09\\d{8}$", example: "0912345678" }
+              required: [name, email, password, phone]
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      email: { type: string, format: email }
+                      role: { type: string, enum: [customer, deliverer, restaurant] }
+                      phone: { type: string }
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /restaurants:
+    get:
+      summary: List restaurants
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Restaurant' }
+
+  /restaurants/{id}:
+    get:
+      summary: Restaurant detail
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Restaurant' }
+
+  /restaurants/{id}/menu:
+    get:
+      summary: Menu items of a restaurant
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/MenuItem' }
+
+  /restaurants/{id}/reviews:
+    get:
+      summary: Reviews of a restaurant
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        userName: { type: string, nullable: true }
+                        rating: { type: integer, minimum: 1, maximum: 5 }
+                        comment: { type: string, nullable: true }
+                        createdAt: { type: string, format: date-time, nullable: true }
+                      required: [id, rating]
+  /orders:
+    post:
+      summary: Create order (customer)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                restaurantId: { type: string }
+                items:
+                  type: array
+                  items: { $ref: '#/components/schemas/OrderItemPayload' }
+                deliveryLocation: { $ref: '#/components/schemas/DeliveryLocation' }
+                notes: { type: string, nullable: true }
+                requestedTime: { type: string, format: date-time, nullable: true }
+                deliveryFee: { type: integer, format: int32, nullable: true }
+                totalAmount: { type: integer, format: int32, nullable: true }
+              required: [restaurantId, items, deliveryLocation]
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status:
+                        type: string
+                        enum: [available, assigned, en_route_to_pickup, picked_up, delivering, delivered, cancelled]
+                      etaMinutes: { type: integer, nullable: true }
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      summary: List customer orders
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, history]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Order' }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /orders/{id}:
+    get:
+      summary: Order detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Order' }
+
+  /orders/{id}/rating:
+    post:
+      summary: Rate an order
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRating'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/OrderRating' }
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /orders/{id}/cancel:
+    patch:
+      summary: Cancel order
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        enum: [cancelled]
+
+  /delivery/available:
+    get:
+      summary: List available orders for delivery
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DeliveryTask' }
+
+  /delivery/{id}/accept:
+    post:
+      summary: Accept a delivery
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/DeliveryTask'
+
+  /delivery/active:
+    get:
+      summary: Active tasks for deliverer
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DeliveryTask' }
+
+  /delivery/history:
+    get:
+      summary: Past tasks for deliverer
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DeliveryTask' }
+
+  /delivery/{id}/status:
+    patch:
+      summary: Update delivery status
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [en_route_to_pickup, picked_up, delivering, delivered, cancelled]
+              required: [status]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/DeliveryTask'
+
+  /delivery/{id}/incident:
+    post:
+      summary: Report incident for a delivery
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+              required: [note]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, example: reported }
+                    additionalProperties: true
+
+  /delivery/locations:
+    get:
+      summary: Preset delivery locations
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DeliveryLocationCategory' }
