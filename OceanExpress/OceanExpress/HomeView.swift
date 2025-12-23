@@ -149,7 +149,7 @@ fileprivate struct RestaurantMenuView: View {
     let restaurantId: String
     let restaurantName: String
     let restaurantRating: Double?
-    @State private var items: [MenuItem] = AppModels.SampleMenu.items
+    @State private var items: [MenuItem] = []
     @State private var isLoading = false
     @State private var reviews: [RestaurantAPI.Review] = []
     @State private var isLoadingReviews = false
