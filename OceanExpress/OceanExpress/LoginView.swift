@@ -152,6 +152,7 @@ struct LoginView: View {
         UserDefaults.standard.removeObject(forKey: "auth_user_id")
         UserDefaults.standard.removeObject(forKey: "restaurant_id")
         NotificationManager.shared.disablePushForSession()
+        password = ""
         withAnimation { isLoggedIn = false }
     }
 

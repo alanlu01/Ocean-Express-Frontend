@@ -364,6 +364,7 @@ struct DeliverySetupView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     @State private var locationCategories: [DeliveryLocationCategory] = []
+    @State private var selectedCategory: String = ""
     @State private var isLoadingLocations = false
     private let timeRange: ClosedRange<Date> = {
         let now = Date()
@@ -374,11 +375,14 @@ struct DeliverySetupView: View {
     var body: some View {
         Form {
             Section("送餐地點") {
-                Picker("地點", selection: $selectedLocation) {
+                Picker("分類", selection: $selectedCategory) {
                     ForEach(locationCategories) { category in
-                        ForEach(category.destinations) { loc in
-                            Text("\(category.name) • \(loc.name)").tag(loc)
-                        }
+                        Text(category.name).tag(category.name)
+                    }
+                }
+                Picker("地點", selection: $selectedLocation) {
+                    ForEach(destinationsForSelectedCategory) { loc in
+                        Text(loc.name).tag(loc)
                     }
                 }
                 Button("設為預設外送地點") {
@@ -442,6 +446,13 @@ struct DeliverySetupView: View {
             Text(errorMessage)
         }
         .task { await loadDeliveryLocations() }
+        .onChange(of: selectedCategory) { _, _ in
+            if let match = destinationsForSelectedCategory.first(where: { $0.name == selectedLocation.name }) {
+                selectedLocation = match
+            } else if let first = destinationsForSelectedCategory.first {
+                selectedLocation = first
+            }
+        }
     }
 
     private func submitOrder() {
@@ -494,9 +505,6 @@ struct DeliverySetupView: View {
     private var total: Int { cart.subtotal + deliveryFee }
 
     private func loadDeliveryLocations() async {
-        if let preset = locationCategories.flatMap({ $0.destinations }).first(where: { $0.name == defaultDeliveryLocationName }) {
-            selectedLocation = preset
-        }
         guard !isLoadingLocations else { return }
         isLoadingLocations = true
         defer { isLoadingLocations = false }
@@ -516,11 +524,35 @@ struct DeliverySetupView: View {
         } catch {
             locationCategories = fallbackCategories()
         }
-        if let preset = locationCategories.flatMap({ $0.destinations }).first(where: { $0.name == defaultDeliveryLocationName }) {
+        syncSelectionWithCategories()
+    }
+
+    private func syncSelectionWithCategories() {
+        // 選分類：若已有預設地點，找出其分類；否則取第一個分類
+        if selectedCategory.isEmpty {
+            if let foundCategory = locationCategories.first(where: { category in
+                category.destinations.contains(where: { $0.name == defaultDeliveryLocationName })
+            }) {
+                selectedCategory = foundCategory.name
+            } else {
+                selectedCategory = locationCategories.first?.name ?? ""
+            }
+        }
+
+        // 選地點：優先用預設地點名稱，其次分類內第一個
+        if let preset = destinationsForSelectedCategory.first(where: { $0.name == defaultDeliveryLocationName }) {
             selectedLocation = preset
-        } else if let first = locationCategories.first?.destinations.first {
+        } else if let match = destinationsForSelectedCategory.first(where: { $0.name == selectedLocation.name }) {
+            selectedLocation = match
+        } else if let first = destinationsForSelectedCategory.first {
             selectedLocation = first
         }
+    }
+
+    private var destinationsForSelectedCategory: [DeliveryDestination] {
+        locationCategories.first(where: { $0.name == selectedCategory })?.destinations
+        ?? locationCategories.first?.destinations
+        ?? []
     }
 
     private func fallbackCategories() -> [DeliveryLocationCategory] {
@@ -597,6 +629,7 @@ struct SettingsView: View {
     @AppStorage("customer_push_enabled") private var pushEnabled = true
     @AppStorage("default_delivery_location_name") private var defaultDeliveryLocationName: String = DeliveryCatalog.defaultDestination.name
     @State private var locationCategories: [DeliveryLocationCategory] = []
+    @State private var selectedCategory: String = ""
     @State private var isLoadingLocations = false
 
     var body: some View {
@@ -627,13 +660,18 @@ struct SettingsView: View {
                 }
 
                 Section("預設外送地點") {
-                    if allLocations.isEmpty {
+                    if destinationsForSelectedCategory.isEmpty {
                         Text("尚未載入地點清單，請在下單時選擇一次即可記錄。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     } else {
+                        Picker("分類", selection: $selectedCategory) {
+                            ForEach(locationCategories) { category in
+                                Text(category.name).tag(category.name)
+                            }
+                        }
                         Picker("預設地點", selection: $defaultDeliveryLocationName) {
-                            ForEach(allLocations) { loc in
+                            ForEach(destinationsForSelectedCategory) { loc in
                                 Text(loc.name).tag(loc.name)
                             }
                         }
@@ -654,6 +692,9 @@ struct SettingsView: View {
             }
             .navigationTitle("設定")
             .task { await loadLocationPresets() }
+            .onChange(of: selectedCategory) { _, _ in
+                syncDefaultLocationWithCategory()
+            }
         }
     }
 
@@ -662,8 +703,10 @@ struct SettingsView: View {
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
-    private var allLocations: [DeliveryDestination] {
-        locationCategories.flatMap(\.destinations)
+    private var destinationsForSelectedCategory: [DeliveryDestination] {
+        locationCategories.first(where: { $0.name == selectedCategory })?.destinations
+        ?? locationCategories.first?.destinations
+        ?? []
     }
 
     private func loadLocationPresets() async {
@@ -679,15 +722,17 @@ struct SettingsView: View {
                 )
             }
             locationCategories = mapped
-            if let matched = allLocations.first(where: { $0.name == defaultDeliveryLocationName }) {
-                defaultDeliveryLocationName = matched.name
-            } else if let first = allLocations.first {
-                defaultDeliveryLocationName = first.name
-            } else {
-                locationCategories = fallbackCategories()
+            if selectedCategory.isEmpty {
+                if let cat = mapped.first(where: { $0.destinations.contains(where: { $0.name == defaultDeliveryLocationName }) }) {
+                    selectedCategory = cat.name
+                } else {
+                    selectedCategory = mapped.first?.name ?? ""
+                }
             }
+            syncDefaultLocationWithCategory()
         } catch {
             locationCategories = fallbackCategories()
+            syncDefaultLocationWithCategory()
         }
     }
 
@@ -695,6 +740,17 @@ struct SettingsView: View {
         let name = defaultDeliveryLocationName.isEmpty ? DeliveryCatalog.defaultDestination.name : defaultDeliveryLocationName
         let dest = DeliveryDestination(name: name, latitude: nil, longitude: nil)
         return [DeliveryLocationCategory(name: "預設地點", destinations: [dest])]
+    }
+
+    private func syncDefaultLocationWithCategory() {
+        if selectedCategory.isEmpty {
+            selectedCategory = locationCategories.first?.name ?? ""
+        }
+        if let match = destinationsForSelectedCategory.first(where: { $0.name == defaultDeliveryLocationName }) {
+            defaultDeliveryLocationName = match.name
+        } else if let first = destinationsForSelectedCategory.first {
+            defaultDeliveryLocationName = first.name
+        }
     }
 }
 
