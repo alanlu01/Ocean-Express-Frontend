@@ -5,7 +5,7 @@ enum APIConfig {
         if let env = ProcessInfo.processInfo.environment["API_BASE_URL"], let url = URL(string: env) {
             return url
         }
-        return URL(string: "https://ocean-express-backend.onrender.com")!
+        return URL(string: "https://oceanexpress.zeabur.app")!
     }
 }
 
